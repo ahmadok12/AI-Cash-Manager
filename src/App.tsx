@@ -8,6 +8,8 @@ import {
   History, Home, Info, Landmark, MessageCircleMore, Mic, PenLine, Search,
   Send, Settings2, Sparkles, Trash2, X,
 } from "lucide-react";
+import { parseSpokenAmount, stripSpokenAmount } from "../supabase/functions/_shared/spoken-amount";
+import { canDeleteTransaction, canEditTransaction } from "./ledger";
 
 type Direction = "IN" | "OUT";
 type Source = "Voice" | "Chat" | "Manual" | "Opening";
@@ -25,42 +27,16 @@ const todayKey = () => new Date().toISOString().slice(0,10);
 const money = (value:number) => `Rs. ${Math.abs(value).toLocaleString("en-PK")}`;
 const signedMoney = (value:number) => `${value < 0 ? "−" : value > 0 ? "+" : ""}${money(value)}`;
 
-const numberWords:Record<string,number>={
-  zero:0,aik:1,ek:1,one:1,do:2,two:2,teen:3,three:3,char:4,chaar:4,four:4,
-  panch:5,paanch:5,five:5,che:6,chay:6,chhe:6,six:6,saat:7,seven:7,aath:8,eight:8,
-  nau:9,nine:9,das:10,ten:10,gyarah:11,barah:12,tera:13,chaudah:14,pandra:15,
-  sola:16,satra:17,athara:18,unnis:19,bees:20,twenty:20,tees:30,thirty:30,
-  chalees:40,chalis:40,forty:40,pachas:50,pachaas:50,fifty:50,sath:60,saath:60,
-  sixty:60,sattar:70,seventy:70,assi:80,eighty:80,nabbe:90,ninety:90,
-};
-const amountUnits=new Set(["so","sau","hundred","hazar","hazaar","thousand","lakh","lac"]);
-
-function parseSpokenAmount(text:string){
-  const tokens=text.toLowerCase().replace(/,/g,"").replace(/[^a-z0-9.]+/g," ").trim().split(/\s+/);
-  let total=0,current=0,found=false;
-  for(const token of tokens){
-    const numeric=/^\d+(?:\.\d+)?$/.test(token)?Number(token):undefined;
-    if(numeric!==undefined){current+=numeric;found=true;continue}
-    if(token in numberWords){current+=numberWords[token];found=true;continue}
-    if(token==="so"||token==="sau"||token==="hundred"){current=(current||1)*100;found=true;continue}
-    if(token==="hazar"||token==="hazaar"||token==="thousand"){total+=(current||1)*1000;current=0;found=true;continue}
-    if(token==="lakh"||token==="lac"){total+=(current||1)*100000;current=0;found=true;continue}
-  }
-  return found?total+current:0;
-}
-
 function parseNatural(text:string) {
   const clean=text.trim(); const lower=clean.toLowerCase();
-  const kAmount=lower.match(/(?:rs\.?\s*)?([\d,.]+)\s*k\b/i);
-  const amount=kAmount?Number(kAmount[1].replace(/,/g,""))*1000:parseSpokenAmount(lower);
+  const amount=parseSpokenAmount(lower);
   const received=/\b(se liye|wasool|receive|received|mili|mile|aaya|aya|nikalwaye|withdraw)/i.test(lower);
   const paid=/\b(ko diye|diye|ada kiye|payment ki|pay kiya|paid|spent|khareeda|dalwaya|jama krwaye|jama karwaye|deposit)/i.test(lower);
   const direction:Direction=received?"IN":"OUT";
   let action=received?"Received":"Spent";
   if (/nikalwaye|withdraw/i.test(lower)) action="Withdrawn";
   if (/jama|deposit/i.test(lower)) action="Deposited";
-  const amountVocabulary=Object.keys(numberWords).concat([...amountUnits],"k").join("|");
-  const description=clean.replace(new RegExp(`\\b(?:[\\d,.]+|${amountVocabulary})\\b`,"gi"),"").replace(/\b(?:rs\.?|rupay|rupees|pkr|rmb|cny)\b/gi,"").replace(/^\s*(?:maine|main ne|i)\b\s*/i,"").replace(/\s{2,}/g," ").trim()||"Cash transaction";
+  const description=stripSpokenAmount(clean).replace(/^\s*(?:maine|main ne|i)\b\s*/i,"").replace(/\s{2,}/g," ").trim()||"Cash transaction";
   return { amount, description, direction, action, ambiguous:!amount||(!received&&!paid) };
 }
 
@@ -139,7 +115,6 @@ export default function CashApp(){
   const display=(value:number)=>hidden?"Rs. •••••":money(value);
 
   function notify(message:string){setToast(message);setTimeout(()=>setToast(""),2600)}
-  const resultingBalance=(list:Transaction[])=>list.reduce((sum,t)=>sum+(t.direction==="IN"?t.amount:-t.amount),0);
   function closeEntry(){setEntryMode(null);setCandidate(null);setInput("");setListening(false)}
   function openEntry(mode:Exclude<EntryMode,null>){
     setTab("home");setEntryMode(mode);setCandidate(null);
@@ -190,13 +165,13 @@ export default function CashApp(){
   async function saveEdit(e:FormEvent){
     e.preventDefault();if(!editTarget)return;const amount=Number(editDraft.amount);if(!amount||!editDraft.description.trim())return;
     const next:Transaction[]=transactions.map(t=>t.id===editTarget.id?{...t,amount,description:editDraft.description.trim(),direction:editDraft.direction,action:editDraft.direction==="IN"?"Received":"Spent",date:editDraft.date,status:googleToken?"Pending":"Local"}:t);
-    if(resultingBalance(next)<0){notify(`This edit would exceed the available balance`);return}
+    if(!canEditTransaction(transactions,editTarget,{direction:editDraft.direction,amount})){notify(`This edit would exceed the available balance`);return}
     setTransactions(next);setEditTarget(null);notify("Transaction updated");
     if(googleToken&&spreadsheetId){try{const ok=await syncAllTransactions(next);setTransactions(prev=>prev.map(t=>({...t,status:ok?"Synced":"Pending"})));if(!ok)notify("Updated on device · Sheets sync pending")}catch{notify("Updated on device · Sheets sync pending")}}
   }
   async function confirmDelete(){
     if(!deleteTarget)return;const next=transactions.filter(t=>t.id!==deleteTarget.id);
-    if(resultingBalance(next)<0){notify("Cannot delete this money-in entry because the balance would become negative");return}
+    if(!canDeleteTransaction(transactions,deleteTarget)){notify("Cannot delete this money-in entry because the balance would become negative");return}
     setTransactions(next);setDeleteTarget(null);notify("Transaction deleted");
     if(googleToken&&spreadsheetId){try{const ok=await syncAllTransactions(next);setTransactions(prev=>prev.map(t=>({...t,status:ok?"Synced":"Pending"})));if(!ok)notify("Deleted on device · Sheets sync pending")}catch{notify("Deleted on device · Sheets sync pending")}}
   }

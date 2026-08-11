@@ -10,6 +10,7 @@ Mobile-first cashbook for Roman Urdu and English transaction entry. The frontend
 - Daily closing summary with expected cash, counted cash, difference, and notes
 - Separate History, Insights, and Settings tabs
 - Roman Urdu rules for `liye`, `diye`, `jama karwaye`, and `nikalwaye`
+- Deterministic Roman Urdu/English compound-number parsing shared by the app and Edge Function
 - Gemini structured parsing with an offline rules-based fallback
 - Supabase Google authentication
 - Per-user Google Sheet creation and synchronization
@@ -36,7 +37,7 @@ The Gemini key is never stored in the frontend or GitHub repository.
 
 1. Install Node.js 22.
 2. Run `npm install`.
-3. Copy your Supabase URL and publishable key into `public/config.js`.
+3. The included `public/config.js` is already configured for project `ydnpucuwnloutfqiycub`.
 4. Run `npm run dev`.
 
 For production setup, follow [DEPLOYMENT.md](DEPLOYMENT.md).
@@ -66,4 +67,7 @@ The browser must ask for microphone permission on the first voice entry. A home-
 - `50000 Meezan Bank main jama karwaye` → Money out / Deposited
 - `20000 Meezan Bank se nikalwaye` → Money in / Withdrawn
 - `1000 Ali` → Ask the user to confirm the direction
-- `2 hazar 5 so sath diye` → Rs. 2,560 money out
+- `2 hazar 5 so 60 diye` → Rs. 2,560 money out
+- `do hazaar paanch sau saath diye` → Rs. 2,560 money out
+
+Run `npm test` to verify the balance rules and compound-number parser before deployment.

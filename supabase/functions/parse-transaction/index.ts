@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { parseSpokenAmount } from "../_shared/spoken-amount.ts";
 
 const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "")
   .split(",").map((origin) => origin.trim()).filter(Boolean);
@@ -50,7 +51,7 @@ Rules:
 - action should be Received, Spent, Withdrawn, or Deposited.
 - amount is a positive number in PKR. Understand k, hazar/thousand, and lakh.
 - Treat compound spoken amounts as arithmetic place values, never concatenated digits.
-- Exact example: "2 hazar 5 so sath" means 2,000 + 500 + 60 = 2,560 (not 2,000,560).
+- Examples: "2 hazar 5 so 60", "2 hazar 5 so sath", and "do hazaar paanch sau saath" all mean 2,560.
 - Roman Urdu number words include so/sau=100, sath/saath=60, sattar=70, assi=80, and nabbe=90.
 - description is short and useful; exclude the numeric amount and currency.
 - ambiguous is true when amount or direction cannot be determined confidently.
@@ -93,6 +94,8 @@ Transaction: ${text.trim()}`;
     const output = data?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!output) return json(req, { error: "Gemini returned no result" }, 502);
     const result = JSON.parse(output);
+    const deterministicAmount = parseSpokenAmount(text);
+    if (deterministicAmount > 0) result.amount = deterministicAmount;
     return json(req, result);
   } catch (error) {
     console.error("parse-transaction error", error);

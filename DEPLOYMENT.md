@@ -8,10 +8,7 @@ Use a separate Supabase project for Hisaab. Do not reuse the SCS Tracking or SCS
 2. Select **New project**.
 3. Name it **Hisaab AI Cash Manager**.
 4. Choose the nearest region and create the project.
-5. Open **Project Settings → Data API** and copy:
-   - Project URL, such as `https://abc123.supabase.co`
-   - Publishable key beginning with `sb_publishable_`
-6. Open `public/config.js` in this project and replace both placeholders.
+5. This package is already configured for Supabase project `ydnpucuwnloutfqiycub` in `public/config.js`.
 
 The publishable key is designed for browser use. Never put a Supabase secret/service-role key in this file.
 
@@ -28,9 +25,9 @@ The publishable key is designed for browser use. Never put a Supabase secret/ser
    - `profile`
    - `https://www.googleapis.com/auth/spreadsheets`
 7. Open **Clients → Create client → Web application**.
-8. Add this authorized redirect URI, replacing `YOUR_PROJECT_REF`:
+8. Add this authorized redirect URI:
 
-   `https://YOUR_PROJECT_REF.supabase.co/auth/v1/callback`
+   `https://ydnpucuwnloutfqiycub.supabase.co/auth/v1/callback`
 
 9. Create the client and copy the Google Client ID and Client Secret.
 
@@ -43,7 +40,7 @@ The publishable key is designed for browser use. Never put a Supabase secret/ser
 5. Open **Authentication → URL Configuration**.
 6. Set **Site URL** to your final GitHub Pages URL:
 
-   `https://YOUR_GITHUB_USERNAME.github.io/AI-Cash-Manager/`
+   `https://ahmadok12.github.io/AI-Cash-Manager/`
 
 7. Add the same address under **Redirect URLs**. For local testing also add `http://localhost:5173/`.
 
@@ -60,10 +57,10 @@ Install the Supabase CLI, sign in, then run these commands from the project fold
 
 ```bash
 npx supabase login
-npx supabase link --project-ref YOUR_PROJECT_REF
+npx supabase link --project-ref ydnpucuwnloutfqiycub
 npx supabase secrets set GEMINI_API_KEY=YOUR_PRIVATE_GEMINI_KEY
 npx supabase secrets set GEMINI_MODEL=gemini-3.5-flash
-npx supabase secrets set ALLOWED_ORIGINS=https://YOUR_GITHUB_USERNAME.github.io
+npx supabase secrets set ALLOWED_ORIGINS=https://ahmadok12.github.io
 npx supabase functions deploy parse-transaction
 ```
 
@@ -79,7 +76,7 @@ npx supabase functions deploy parse-transaction
 6. Open the **Actions** tab. The **Deploy GitHub Pages** workflow will build and publish the site.
 7. When it finishes, open:
 
-   `https://YOUR_GITHUB_USERNAME.github.io/AI-Cash-Manager/`
+   `https://ahmadok12.github.io/AI-Cash-Manager/`
 
 If your repository name differs, use that exact repository name in the URL and in Supabase's Site URL/Redirect URLs.
 
@@ -106,6 +103,8 @@ Each tester should:
 - **Function returns 401:** sign out/reconnect Google; the function requires a valid Supabase user session.
 - **CORS error:** `ALLOWED_ORIGINS` must be the origin only, for example `https://ahmadok12.github.io`, without the repository path.
 - **No sheet appears:** open **Settings → Reconnect Google Sheets**. The app validates any saved sheet ID, creates **Hisaab AI Cashbook** when needed, and shows the specific Google API error if creation fails.
+- **“Add your Supabase settings in public/config.js”:** confirm `public/config.js` was uploaded to GitHub and contains project `ydnpucuwnloutfqiycub`. Do not upload an older placeholder copy.
+- **An old amount result still appears:** hard-refresh the deployed page after GitHub Actions turns green, then redeploy `parse-transaction` so both parser layers use the same rules.
 - **Sheet does not open:** reconnect Google; Google provider access tokens expire and may need renewed consent.
 
 ## Security checklist before public testing

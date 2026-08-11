@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "test:parser": "node --experimental-strip-types --test tests/spoken-amount.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

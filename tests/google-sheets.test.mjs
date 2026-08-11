@@ -55,3 +55,13 @@ test("running balance follows transaction date and then creation order", () => {
     ["2026-08-12", 700],
   ]);
 });
+
+test("opening balance is first when it shares a date with transactions", () => {
+  const rows = transactionRows([
+    { id: 1, date: "2026-08-11", time: "8:00 AM", action: "Spent", amount: 200, direction: "OUT", description: "Tea", source: "Manual" },
+    { id: 2, date: "2026-08-11", time: "9:00 AM", action: "Opening balance", amount: 1000, direction: "IN", description: "Opening balance", source: "Opening" },
+  ]);
+  assert.equal(rows[0][3], "Opening balance");
+  assert.equal(rows[0][6], 1000);
+  assert.equal(rows[1][6], 800);
+});

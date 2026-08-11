@@ -38,7 +38,14 @@ type CashbookTransaction = {
 export function transactionRows(transactions: CashbookTransaction[]) {
   let balance = 0;
   return [...transactions]
-    .sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id)
+    .sort((a, b) => {
+      const byDate = a.date.localeCompare(b.date);
+      if (byDate) return byDate;
+      const aOpening = a.source === "Opening" || a.action === "Opening balance";
+      const bOpening = b.source === "Opening" || b.action === "Opening balance";
+      if (aOpening !== bOpening) return aOpening ? -1 : 1;
+      return a.id - b.id;
+    })
     .map((row) => {
       const moneyIn = row.direction === "IN" ? row.amount : "";
       const moneyOut = row.direction === "OUT" ? row.amount : "";

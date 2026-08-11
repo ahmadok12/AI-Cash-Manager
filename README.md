@@ -14,7 +14,7 @@ Mobile-first cashbook for Roman Urdu and English transaction entry. The frontend
 
 - Voice, chat, and manual transaction entry
 - Focused mobile-only dashboard with three direct one-tap entry shortcuts
-- Opening balance entry from Home or Settings
+- One opening balance per cashbook, with an editable amount and date
 - Daily closing summary with expected cash, counted cash, difference, and notes
 - Separate History, Insights, and Settings tabs
 - Roman Urdu rules for `liye`, `diye`, `jama karwaye`, and `nikalwaye`

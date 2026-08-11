@@ -2,8 +2,6 @@
 
 Mobile-first cashbook for Roman Urdu and English transaction entry. The frontend is deployed on GitHub Pages, Gemini runs inside a JWT-protected Supabase Edge Function, and every tester stores transactions in a Google Sheet owned by their own Google account.
 
-The first-run onboarding now asks users to choose an English-text currency label and set up either a cash wallet or a bank account. The same options remain available under Settings → Currency & wallet. PKR is always displayed as `Rs.`; the Indian rupee symbol is never used.
-
 ## Included
 
 - Voice, chat, and manual transaction entry
@@ -15,7 +13,10 @@ The first-run onboarding now asks users to choose an English-text currency label
 - Gemini structured parsing with an offline rules-based fallback
 - Supabase Google authentication
 - Per-user Google Sheet creation and synchronization
-- Local device persistence, search, confirmation, and undo
+- Automatic sheet creation after Google authorization
+- Edit and delete past entries with Google Sheets synchronization
+- Balance protection that blocks money-out above the available balance
+- Local device persistence, search, and confirmation
 - Mobile-first typography and accessible touch targets
 - Installable home-screen app metadata and Android app shortcuts
 - GitHub Pages deployment workflow
@@ -35,8 +36,7 @@ The Gemini key is never stored in the frontend or GitHub repository.
 
 1. Install Node.js 22.
 2. Run `npm install`.
-3. The supplied `public/config.js` is already connected to Supabase project
-   `ydnpucuwnloutfqiycub` with its browser-safe publishable key.
+3. Copy your Supabase URL and publishable key into `public/config.js`.
 4. Run `npm run dev`.
 
 For production setup, follow [DEPLOYMENT.md](DEPLOYMENT.md).
@@ -66,3 +66,4 @@ The browser must ask for microphone permission on the first voice entry. A home-
 - `50000 Meezan Bank main jama karwaye` → Money out / Deposited
 - `20000 Meezan Bank se nikalwaye` → Money in / Withdrawn
 - `1000 Ali` → Ask the user to confirm the direction
+- `2 hazar 5 so sath diye` → Rs. 2,560 money out

@@ -49,6 +49,9 @@ Rules:
 - direction must be IN or OUT.
 - action should be Received, Spent, Withdrawn, or Deposited.
 - amount is a positive number in PKR. Understand k, hazar/thousand, and lakh.
+- Treat compound spoken amounts as arithmetic place values, never concatenated digits.
+- Exact example: "2 hazar 5 so sath" means 2,000 + 500 + 60 = 2,560 (not 2,000,560).
+- Roman Urdu number words include so/sau=100, sath/saath=60, sattar=70, assi=80, and nabbe=90.
 - description is short and useful; exclude the numeric amount and currency.
 - ambiguous is true when amount or direction cannot be determined confidently.
 

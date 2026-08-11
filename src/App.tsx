@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { parseSpokenAmount, stripSpokenAmount } from "../supabase/functions/_shared/spoken-amount";
 import { canDeleteTransaction, canEditTransaction } from "./ledger";
+import { cashbookSpreadsheetPayload, sheetProperties } from "./google-sheets";
 
 type Direction = "IN" | "OUT";
 type Source = "Voice" | "Chat" | "Manual" | "Opening";
@@ -153,7 +154,7 @@ export default function CashApp(){
     const headers={Authorization:`Bearer ${token}`,"Content-Type":"application/json"};
     const meta=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties.title`,{headers});if(!meta.ok)throw new Error(await googleApiError(meta,"Google could not read the cashbook"));
     const titles=((await meta.json()).sheets||[]).map((s:{properties:{title:string}})=>s.properties.title);
-    if(!titles.includes("Daily Closings")){const added=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}:batchUpdate`,{method:"POST",headers,body:JSON.stringify({requests:[{addSheet:{properties:{title:"Daily Closings",frozenRowCount:1}}}]})});if(!added.ok)throw new Error(await googleApiError(added,"Google could not add the closing sheet"))}
+    if(!titles.includes("Daily Closings")){const added=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}:batchUpdate`,{method:"POST",headers,body:JSON.stringify({requests:[{addSheet:{properties:sheetProperties("Daily Closings")}}]})});if(!added.ok)throw new Error(await googleApiError(added,"Google could not add the closing sheet"))}
     const heading=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/'Daily Closings'!A1:G1?valueInputOption=RAW`,{method:"PUT",headers,body:JSON.stringify({values:[["Date","Closed at","Expected cash","Counted cash","Difference","Entries","Note"]]})});if(!heading.ok)throw new Error(await googleApiError(heading,"Google could not prepare the closing sheet"));return true;
   }
   async function appendClosingToSheet(c:Closing){if(!googleToken||!spreadsheetId)return;await ensureClosingSheet(googleToken,spreadsheetId);await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'Daily Closings'!A:G:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:"POST",headers:{Authorization:`Bearer ${googleToken}`,"Content-Type":"application/json"},body:JSON.stringify({values:[[c.date,c.closedAt,c.expected,c.counted,c.difference,totals.todays.length,c.note]]})})}
@@ -195,7 +196,7 @@ export default function CashApp(){
     let id=spreadsheetId;
     const headers={Authorization:`Bearer ${token}`,"Content-Type":"application/json"};
     if(id){const existing=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}?fields=spreadsheetId`,{headers});if(!existing.ok){id="";localStorage.removeItem("hisaab-sheet-id");setSpreadsheetId("")}}
-    if(!id){const created=await fetch("https://sheets.googleapis.com/v4/spreadsheets",{method:"POST",headers,body:JSON.stringify({properties:{title:"Hisaab AI Cashbook"},sheets:[{properties:{title:"Transactions",frozenRowCount:1}},{properties:{title:"Daily Closings",frozenRowCount:1}}]})});if(!created.ok)throw new Error(await googleApiError(created,"Google Sheets could not create the cashbook"));const createdSheet=await created.json();id=createdSheet.spreadsheetId;if(!id)throw new Error("Google did not return a spreadsheet ID");localStorage.setItem("hisaab-sheet-id",id);setSpreadsheetId(id);const heading=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/Transactions!A1:I1?valueInputOption=RAW`,{method:"PUT",headers,body:JSON.stringify({values:[["ID","Date","Time","Direction","Type","Amount (PKR)","Description","Entry method","Parser"]]})});if(!heading.ok)throw new Error(await googleApiError(heading,"Cashbook created, but its headings could not be prepared"))}
+    if(!id){const created=await fetch("https://sheets.googleapis.com/v4/spreadsheets",{method:"POST",headers,body:JSON.stringify(cashbookSpreadsheetPayload())});if(!created.ok)throw new Error(await googleApiError(created,"Google Sheets could not create the cashbook"));const createdSheet=await created.json();id=createdSheet.spreadsheetId;if(!id)throw new Error("Google did not return a spreadsheet ID");localStorage.setItem("hisaab-sheet-id",id);setSpreadsheetId(id);const heading=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/Transactions!A1:I1?valueInputOption=RAW`,{method:"PUT",headers,body:JSON.stringify({values:[["ID","Date","Time","Direction","Type","Amount (PKR)","Description","Entry method","Parser"]]})});if(!heading.ok)throw new Error(await googleApiError(heading,"Cashbook created, but its headings could not be prepared"))}
     await ensureClosingSheet(token,id);
     const synced=await syncAllTransactions(transactions,token,id);if(!synced)throw new Error("Cashbook created, but transactions could not be synced");return id;
   }

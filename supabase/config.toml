@@ -1,0 +1,2 @@
+[functions.parse-transaction]
+verify_jwt = true

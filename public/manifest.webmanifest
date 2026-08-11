@@ -1,0 +1,19 @@
+{
+  "name": "Hisaab AI Cashbook",
+  "short_name": "Hisaab",
+  "description": "Record cash transactions by voice, chat, or manual entry.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f8f6f2",
+  "theme_color": "#de2910",
+  "icons": [
+    { "src": "./hisaab-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./hisaab-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Record by voice", "short_name": "Voice", "url": "./?quick=voice", "icons": [{ "src": "./hisaab-icon-192.png", "sizes": "192x192", "type": "image/png" }] },
+    { "name": "Record by chat", "short_name": "Chat", "url": "./?quick=chat", "icons": [{ "src": "./hisaab-icon-192.png", "sizes": "192x192", "type": "image/png" }] },
+    { "name": "Manual entry", "short_name": "Manual", "url": "./?quick=manual", "icons": [{ "src": "./hisaab-icon-192.png", "sizes": "192x192", "type": "image/png" }] }
+  ]
+}

@@ -44,6 +44,19 @@ The publishable key is designed for browser use. Never put a Supabase secret/ser
 
 7. Add the same address under **Redirect URLs**. For local testing also add `http://localhost:5173/`.
 
+## 3A. Enable pre-Google Supabase backup
+
+1. In Supabase, open **Authentication → Providers → Anonymous Sign-Ins** and enable anonymous users.
+2. In **Authentication → Providers**, enable manual identity linking so the temporary user can later be linked to Google.
+3. Open **SQL Editor**.
+4. Copy and run the complete contents of:
+
+   `supabase/setup-cashbook-backup.sql`
+
+The table has Row Level Security enabled. Every operation checks that `auth.uid()` matches the row's `user_id`.
+
+If anonymous sign-in or the table is not ready, Hisaab continues saving on the current device and shows **Setup required** under Supabase backup.
+
 ## 4. Create and secure the Gemini key
 
 1. Go to https://aistudio.google.com/.
@@ -93,6 +106,7 @@ Each tester should:
 7. Add an opening balance, then confirm it appears as an opening transaction.
 8. Complete **Close today's cash** and check that expected cash, counted cash, and any difference are clear.
 9. Press the Google Sheets button to open the tester's sheet and confirm the transaction rows.
+10. Edit one description in Google Sheets, return to **Settings → Check Google Sheet changes**, and confirm that Hisaab asks whether to import or restore rather than overwriting automatically.
 
 ## 8. Troubleshooting
 

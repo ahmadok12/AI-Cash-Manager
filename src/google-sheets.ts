@@ -11,18 +11,20 @@ export const cashbookSpreadsheetPayload = () => ({
   ],
 });
 
-export const transactionHeaders = [
+export const transactionHeadersFor = (currency = "PKR") => [
   "ID",
   "Date",
   "Time",
   "Type",
-  "Money In (PKR)",
-  "Money Out (PKR)",
-  "Running Balance (PKR)",
+  `Money In (${currency})`,
+  `Money Out (${currency})`,
+  `Running Balance (${currency})`,
   "Description",
   "Entry method",
   "Parser",
 ];
+
+export const transactionHeaders = transactionHeadersFor();
 
 type CashbookTransaction = {
   id: number;

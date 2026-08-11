@@ -26,6 +26,11 @@ Mobile-first cashbook for Roman Urdu and English transaction entry. The frontend
 - Edit and delete past entries with Google Sheets synchronization
 - Balance protection that blocks money-out above the available balance
 - Local device persistence, search, and confirmation
+- Three-step first-run onboarding for currency, cash/bank wallet details, and optional Google Sheets connection
+- Editable voice/chat confirmation before saving
+- Configurable currency with English-only labels (`Rs.` for PKR; never `₹`)
+- Google Sheet change detection with explicit import or restore choices
+- Optional private Supabase backup for entries recorded before Google Sheets is connected
 - Mobile-first typography and accessible touch targets
 - Installable home-screen app metadata and Android app shortcuts
 - GitHub Pages deployment workflow
@@ -34,12 +39,15 @@ Mobile-first cashbook for Roman Urdu and English transaction entry. The frontend
 
 ```text
 GitHub Pages frontend
-  ├─ Supabase Auth → Google OAuth
+  ├─ Supabase Auth → anonymous session, later linked to Google OAuth
+  ├─ Supabase Database → private per-user backup (RLS protected)
   ├─ Google Sheets API → user's own spreadsheet
   └─ Supabase Edge Function → Gemini API
 ```
 
 The Gemini key is never stored in the frontend or GitHub repository.
+
+The app/Supabase ledger is the source of truth. If a user edits the Google Sheet, Hisaab detects the difference and asks whether to import the validated Sheet version or restore the Sheet from the app. It never resolves an accounting conflict silently.
 
 ## Local development
 

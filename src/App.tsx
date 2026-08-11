@@ -40,6 +40,15 @@ function parseNatural(text:string) {
   return { amount, description, direction, action, ambiguous:!amount||(!received&&!paid) };
 }
 
+async function googleApiError(response:Response,fallback:string){
+  const detail=await response.json().catch(()=>({})) as {error?:{code?:number;message?:string;status?:string}};
+  const message=detail.error?.message||fallback;
+  if(response.status===401)return "Google access expired. Tap Reconnect Google Sheets and approve access again.";
+  if(response.status===403&&/insufficient|scope|permission/i.test(message))return "Google Sheets permission was not granted. Reconnect and allow spreadsheet access.";
+  if(response.status===403&&/api.*disabled|not been used/i.test(message))return "Enable Google Sheets API in the same Google Cloud project, then reconnect.";
+  return message;
+}
+
 export default function CashApp(){
   const [tab,setTab]=useState<Tab>("home");
   const [transactions,setTransactions]=useState<Transaction[]>([]);
@@ -72,6 +81,7 @@ export default function CashApp(){
   const [deleteTarget,setDeleteTarget]=useState<Transaction|null>(null);
   const chatRef=useRef<HTMLInputElement>(null);
   const manualRef=useRef<HTMLInputElement>(null);
+  const sheetConnectInFlight=useRef(false);
 
   useEffect(()=>{
     const saved=localStorage.getItem("ai-cash-v1"); if(saved) setTransactions(JSON.parse(saved));
@@ -80,7 +90,10 @@ export default function CashApp(){
     const config=window.APP_CONFIG||{};
     if(config.supabaseUrl&&config.supabasePublishableKey&&!config.supabaseUrl.includes("YOUR_")){
       const client=createClient(config.supabaseUrl,config.supabasePublishableKey);setSupabase(client);setGeminiReady(true);
-      client.auth.getSession().then(({data})=>{setSession(data.session);setGoogleEmail(data.session?.user.email||"")});
+      client.auth.getSession().then(({data})=>{
+        const current=data.session;setSession(current);setGoogleEmail(current?.user.email||"");
+        if(current?.provider_token){setGoogleToken(current.provider_token);sessionStorage.setItem("hisaab-google-token",current.provider_token)}
+      });
       const {data:listener}=client.auth.onAuthStateChange((_event,next)=>{
         setSession(next);setGoogleEmail(next?.user.email||"");
         if(next?.provider_token){setGoogleToken(next.provider_token);sessionStorage.setItem("hisaab-google-token",next.provider_token)}
@@ -137,10 +150,11 @@ export default function CashApp(){
     return written.ok;
   }
   async function ensureClosingSheet(token:string,sheetId:string){
-    const meta=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties.title`,{headers:{Authorization:`Bearer ${token}`}});if(!meta.ok)return false;
+    const headers={Authorization:`Bearer ${token}`,"Content-Type":"application/json"};
+    const meta=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties.title`,{headers});if(!meta.ok)throw new Error(await googleApiError(meta,"Google could not read the cashbook"));
     const titles=((await meta.json()).sheets||[]).map((s:{properties:{title:string}})=>s.properties.title);
-    if(!titles.includes("Daily Closings"))await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}:batchUpdate`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({requests:[{addSheet:{properties:{title:"Daily Closings",frozenRowCount:1}}}]})});
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/'Daily Closings'!A1:G1?valueInputOption=RAW`,{method:"PUT",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({values:[["Date","Closed at","Expected cash","Counted cash","Difference","Entries","Note"]]})});return true;
+    if(!titles.includes("Daily Closings")){const added=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}:batchUpdate`,{method:"POST",headers,body:JSON.stringify({requests:[{addSheet:{properties:{title:"Daily Closings",frozenRowCount:1}}}]})});if(!added.ok)throw new Error(await googleApiError(added,"Google could not add the closing sheet"))}
+    const heading=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/'Daily Closings'!A1:G1?valueInputOption=RAW`,{method:"PUT",headers,body:JSON.stringify({values:[["Date","Closed at","Expected cash","Counted cash","Difference","Entries","Note"]]})});if(!heading.ok)throw new Error(await googleApiError(heading,"Google could not prepare the closing sheet"));return true;
   }
   async function appendClosingToSheet(c:Closing){if(!googleToken||!spreadsheetId)return;await ensureClosingSheet(googleToken,spreadsheetId);await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'Daily Closings'!A:G:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:"POST",headers:{Authorization:`Bearer ${googleToken}`,"Content-Type":"application/json"},body:JSON.stringify({values:[[c.date,c.closedAt,c.expected,c.counted,c.difference,totals.todays.length,c.note]]})})}
   async function addTransaction(data:ReturnType<typeof parseNatural>,source:Source){
@@ -181,14 +195,17 @@ export default function CashApp(){
     let id=spreadsheetId;
     const headers={Authorization:`Bearer ${token}`,"Content-Type":"application/json"};
     if(id){const existing=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}?fields=spreadsheetId`,{headers});if(!existing.ok){id="";localStorage.removeItem("hisaab-sheet-id");setSpreadsheetId("")}}
-    if(!id){const created=await fetch("https://sheets.googleapis.com/v4/spreadsheets",{method:"POST",headers,body:JSON.stringify({properties:{title:"Hisaab AI Cashbook"},sheets:[{properties:{title:"Transactions",frozenRowCount:1}},{properties:{title:"Daily Closings",frozenRowCount:1}}]})});if(!created.ok){const detail=await created.json().catch(()=>({}));throw new Error(detail?.error?.message||"Google Sheets could not create the cashbook")};id=(await created.json()).spreadsheetId;const heading=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/Transactions!A1:I1?valueInputOption=RAW`,{method:"PUT",headers,body:JSON.stringify({values:[["ID","Date","Time","Direction","Type","Amount (PKR)","Description","Entry method","Parser"]]})});if(!heading.ok)throw new Error("Cashbook created, but its headings could not be prepared");localStorage.setItem("hisaab-sheet-id",id);setSpreadsheetId(id)}
+    if(!id){const created=await fetch("https://sheets.googleapis.com/v4/spreadsheets",{method:"POST",headers,body:JSON.stringify({properties:{title:"Hisaab AI Cashbook"},sheets:[{properties:{title:"Transactions",frozenRowCount:1}},{properties:{title:"Daily Closings",frozenRowCount:1}}]})});if(!created.ok)throw new Error(await googleApiError(created,"Google Sheets could not create the cashbook"));const createdSheet=await created.json();id=createdSheet.spreadsheetId;if(!id)throw new Error("Google did not return a spreadsheet ID");localStorage.setItem("hisaab-sheet-id",id);setSpreadsheetId(id);const heading=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/Transactions!A1:I1?valueInputOption=RAW`,{method:"PUT",headers,body:JSON.stringify({values:[["ID","Date","Time","Direction","Type","Amount (PKR)","Description","Entry method","Parser"]]})});if(!heading.ok)throw new Error(await googleApiError(heading,"Cashbook created, but its headings could not be prepared"))}
     await ensureClosingSheet(token,id);
     const synced=await syncAllTransactions(transactions,token,id);if(!synced)throw new Error("Cashbook created, but transactions could not be synced");return id;
   }
   async function finishSheetConnection(token:string){
+    if(sheetConnectInFlight.current)return;
+    sheetConnectInFlight.current=true;
     setSheetState("connecting");setSheetError("");
-    try{await prepareSpreadsheet(token);setTransactions(prev=>prev.map(t=>({...t,status:"Synced"})));localStorage.removeItem("hisaab-sheet-connect-pending");setSheetState("connected");notify("Google Sheet created and connected")}
+    try{await prepareSpreadsheet(token);setTransactions(prev=>prev.map(t=>({...t,status:"Synced"})));localStorage.removeItem("hisaab-sheet-connect-pending");setSheetState("connected");notify("Hisaab AI Cashbook created and connected")}
     catch(error){const message=error instanceof Error?error.message:"Google Sheets connection failed";sessionStorage.removeItem("hisaab-google-token");setGoogleToken("");setSheetState("error");setSheetError(message);notify(message)}
+    finally{sheetConnectInFlight.current=false}
   }
   async function connectGoogle(){
     if(!supabase){notify("Add your Supabase settings in public/config.js");return}
@@ -215,8 +232,8 @@ export default function CashApp(){
 
       <div className="section-title"><div><small>QUICK ENTRY</small><h2>How do you want to record?</h2></div><Sparkles/></div>
       <div className="entry-grid">
-        <button className="entry-action voice" onClick={()=>openEntry("voice")}><span><Mic/></span><strong>Voice</strong><small>Tap & speak</small></button>
         <button className="entry-action chat" onClick={()=>openEntry("chat")}><span><MessageCircleMore/></span><strong>Chat</strong><small>Type naturally</small></button>
+        <button className="entry-action voice" onClick={()=>openEntry("voice")}><span><Mic/></span><strong>Voice</strong><small>Tap & speak</small></button>
         <button className="entry-action manual" onClick={()=>openEntry("manual")}><span><PenLine/></span><strong>Manual</strong><small>Fill details</small></button>
       </div>
 

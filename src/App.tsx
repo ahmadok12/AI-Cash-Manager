@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { parseSpokenAmount, stripSpokenAmount } from "../supabase/functions/_shared/spoken-amount";
 import { canDeleteTransaction, canEditTransaction } from "./ledger";
-import { cashbookSpreadsheetPayload, sheetProperties } from "./google-sheets";
+import { cashbookSpreadsheetPayload, sheetProperties, transactionHeaders, transactionRows } from "./google-sheets";
 
 type Direction = "IN" | "OUT";
 type Source = "Voice" | "Chat" | "Manual" | "Opening";
@@ -135,19 +135,15 @@ export default function CashApp(){
     setTimeout(()=>{if(mode==="voice")startVoice();if(mode==="chat")chatRef.current?.focus();if(mode==="manual")manualRef.current?.focus()},120);
   }
 
-  async function appendToSheet(row:Transaction,token=googleToken,sheetId=spreadsheetId){
-    if(!token||!sheetId)return false;
-    const response=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Transactions!A:I:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({values:[[row.id,row.date,row.time,row.direction,row.action,row.amount,row.description,row.source,"Hisaab AI"]]})});
-    return response.ok;
-  }
-  const sheetRows=(list:Transaction[])=>[...list].reverse().map(row=>[row.id,row.date,row.time,row.direction,row.action,row.amount,row.description,row.source,"Hisaab AI"]);
   async function syncAllTransactions(list:Transaction[],token=googleToken,sheetId=spreadsheetId){
     if(!token||!sheetId)return false;
     const headers={Authorization:`Bearer ${token}`,"Content-Type":"application/json"};
-    const cleared=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Transactions!A2:I:clear`,{method:"POST",headers});
+    const heading=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Transactions!A1:J1?valueInputOption=RAW`,{method:"PUT",headers,body:JSON.stringify({values:[transactionHeaders]})});
+    if(!heading.ok)return false;
+    const cleared=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Transactions!A2:Z:clear`,{method:"POST",headers});
     if(!cleared.ok)return false;
-    const rows=sheetRows(list);if(!rows.length)return true;
-    const written=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Transactions!A2:I?valueInputOption=USER_ENTERED`,{method:"PUT",headers,body:JSON.stringify({values:rows})});
+    const rows=transactionRows(list);if(!rows.length)return true;
+    const written=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Transactions!A2:J?valueInputOption=USER_ENTERED`,{method:"PUT",headers,body:JSON.stringify({values:rows})});
     return written.ok;
   }
   async function ensureClosingSheet(token:string,sheetId:string){
@@ -161,8 +157,8 @@ export default function CashApp(){
   async function addTransaction(data:ReturnType<typeof parseNatural>,source:Source){
     if(data.direction==="OUT"&&data.amount>totals.balance){notify(`Not enough balance · available ${money(totals.balance)}`);return}
     const now=new Date(); const row:Transaction={id:Date.now(),amount:data.amount,description:data.description,direction:data.direction,action:data.action,date:todayKey(),time:now.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"}),source,status:googleToken?"Pending":"Local"};
-    setTransactions(prev=>[row,...prev]);closeEntry();notify(`${money(row.amount)} recorded`);
-    if(googleToken){try{const synced=await appendToSheet(row);setTransactions(prev=>prev.map(t=>t.id===row.id?{...t,status:synced?"Synced":"Pending"}:t))}catch{notify("Saved on device · reconnect Sheets to sync")}}
+    const next=[row,...transactions];setTransactions(next);closeEntry();notify(`${money(row.amount)} recorded`);
+    if(googleToken&&spreadsheetId){try{const synced=await syncAllTransactions(next);setTransactions(prev=>prev.map(t=>t.id===row.id?{...t,status:synced?"Synced":"Pending"}:t));if(!synced)notify("Saved on device · Sheets sync pending")}catch{notify("Saved on device · reconnect Sheets to sync")}}
   }
   async function interpretText(value:string){
     if(!value.trim())return;setParsing(true);
@@ -196,7 +192,7 @@ export default function CashApp(){
     let id=spreadsheetId;
     const headers={Authorization:`Bearer ${token}`,"Content-Type":"application/json"};
     if(id){const existing=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}?fields=spreadsheetId`,{headers});if(!existing.ok){id="";localStorage.removeItem("hisaab-sheet-id");setSpreadsheetId("")}}
-    if(!id){const created=await fetch("https://sheets.googleapis.com/v4/spreadsheets",{method:"POST",headers,body:JSON.stringify(cashbookSpreadsheetPayload())});if(!created.ok)throw new Error(await googleApiError(created,"Google Sheets could not create the cashbook"));const createdSheet=await created.json();id=createdSheet.spreadsheetId;if(!id)throw new Error("Google did not return a spreadsheet ID");localStorage.setItem("hisaab-sheet-id",id);setSpreadsheetId(id);const heading=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/Transactions!A1:I1?valueInputOption=RAW`,{method:"PUT",headers,body:JSON.stringify({values:[["ID","Date","Time","Direction","Type","Amount (PKR)","Description","Entry method","Parser"]]})});if(!heading.ok)throw new Error(await googleApiError(heading,"Cashbook created, but its headings could not be prepared"))}
+    if(!id){const created=await fetch("https://sheets.googleapis.com/v4/spreadsheets",{method:"POST",headers,body:JSON.stringify(cashbookSpreadsheetPayload())});if(!created.ok)throw new Error(await googleApiError(created,"Google Sheets could not create the cashbook"));const createdSheet=await created.json();id=createdSheet.spreadsheetId;if(!id)throw new Error("Google did not return a spreadsheet ID");localStorage.setItem("hisaab-sheet-id",id);setSpreadsheetId(id)}
     await ensureClosingSheet(token,id);
     const synced=await syncAllTransactions(transactions,token,id);if(!synced)throw new Error("Cashbook created, but transactions could not be synced");return id;
   }

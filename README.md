@@ -1,5 +1,13 @@
 # Hisaab AI Cash Manager
 
+## Google Sheets cashbook columns
+
+The Transactions sheet keeps money received and money paid in separate columns and recalculates the running balance whenever transactions are added, edited, deleted, or re-synced.
+
+```text
+ID | Date | Time | Type | Money In (PKR) | Money Out (PKR) | Running Balance (PKR) | Description | Entry method | Parser
+```
+
 Mobile-first cashbook for Roman Urdu and English transaction entry. The frontend is deployed on GitHub Pages, Gemini runs inside a JWT-protected Supabase Edge Function, and every tester stores transactions in a Google Sheet owned by their own Google account.
 
 ## Included

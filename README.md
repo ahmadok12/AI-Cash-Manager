@@ -2,6 +2,8 @@
 
 Mobile-first cashbook for Roman Urdu and English transaction entry. The frontend is deployed on GitHub Pages, Gemini runs inside a JWT-protected Supabase Edge Function, and every tester stores transactions in a Google Sheet owned by their own Google account.
 
+The first-run onboarding now asks users to choose an English-text currency label and set up either a cash wallet or a bank account. The same options remain available under Settings → Currency & wallet. PKR is always displayed as `Rs.`; the Indian rupee symbol is never used.
+
 ## Included
 
 - Voice, chat, and manual transaction entry

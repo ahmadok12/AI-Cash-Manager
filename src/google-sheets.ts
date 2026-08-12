@@ -15,6 +15,7 @@ export const transactionHeadersFor = (currency = "PKR") => [
   "ID",
   "Date",
   "Time",
+  "Wallet",
   "Type",
   `Money In (${currency})`,
   `Money Out (${currency})`,
@@ -35,10 +36,12 @@ type CashbookTransaction = {
   direction: "IN" | "OUT";
   description: string;
   source: string;
+  walletId?: string;
+  walletName?: string;
 };
 
 export function transactionRows(transactions: CashbookTransaction[]) {
-  let balance = 0;
+  const balances = new Map<string, number>();
   return [...transactions]
     .sort((a, b) => {
       const byDate = a.date.localeCompare(b.date);
@@ -49,13 +52,16 @@ export function transactionRows(transactions: CashbookTransaction[]) {
       return a.id - b.id;
     })
     .map((row) => {
+      const walletKey = row.walletId || "wallet-cash";
       const moneyIn = row.direction === "IN" ? row.amount : "";
       const moneyOut = row.direction === "OUT" ? row.amount : "";
-      balance += row.direction === "IN" ? row.amount : -row.amount;
+      const balance = (balances.get(walletKey) || 0) + (row.direction === "IN" ? row.amount : -row.amount);
+      balances.set(walletKey, balance);
       return [
         row.id,
         row.date,
         row.time,
+        row.walletName || row.walletId || "Cash",
         row.action,
         moneyIn,
         moneyOut,

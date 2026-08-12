@@ -8,19 +8,21 @@ import {
   History, Home, Info, Landmark, MessageCircleMore, Mic, PenLine, Search,
   Send, Settings2, Sparkles, Trash2, X,
   Banknote, Cloud, RefreshCw, ShieldCheck, WalletCards,
+  ArrowRightLeft, Plus, Archive,
 } from "lucide-react";
 import { parseSpokenAmount, stripSpokenAmount } from "../supabase/functions/_shared/spoken-amount";
-import { canDeleteTransaction, canEditTransaction } from "./ledger";
+import { canDeleteTransaction } from "./ledger";
 import { cashbookSpreadsheetPayload, sheetProperties, transactionHeadersFor, transactionRows } from "./google-sheets";
 import { currentOpeningBalance, isOpeningBalanceEntry, openingBalanceEntries, replaceOpeningBalance } from "./opening-balance";
 import { loadCloudCashbook, saveCloudCashbook } from "./cloud-backup";
 import { compareSheetTransactions, parseSheetRows, SheetConflictSummary } from "./sheet-conflicts";
-import { CashbookProfile, CURRENCY_OPTIONS, currencyPrefix, DEFAULT_PROFILE, normalizeProfile, profileIsValid } from "./profile";
+import { activeWallet, CashbookProfile, CURRENCY_OPTIONS, currencyPrefix, DEFAULT_PROFILE, normalizeProfile, profileIsValid, Wallet, walletIsValid, withActiveWallet } from "./profile";
+import { migrateWalletTransactions, totalBalance, transferEntries, uniqueWalletName, walletBalance, walletLabel, walletTransactions } from "./wallets";
 
 type Direction = "IN" | "OUT";
-type Source = "Voice" | "Chat" | "Manual" | "Opening";
-type Transaction = { id:number; amount:number; description:string; direction:Direction; action:string; date:string; time:string; source:Source; status:"Synced"|"Pending"|"Local" };
-type Closing = { date:string; expected:number; counted:number; difference:number; note:string; closedAt:string };
+type Source = "Voice" | "Chat" | "Manual" | "Opening" | "Transfer";
+type Transaction = { id:number; amount:number; description:string; direction:Direction; action:string; date:string; time:string; source:Source; status:"Synced"|"Pending"|"Local"; walletId:string; transferId?:string };
+type Closing = { date:string; expected:number; counted:number; difference:number; note:string; closedAt:string; walletId:string };
 type Tab = "home" | "history" | "insights" | "settings";
 type EntryMode = "voice" | "chat" | "manual" | null;
 type SheetState = "disconnected" | "connecting" | "connected" | "error";
@@ -85,11 +87,15 @@ export default function CashApp(){
   const [sheetState,setSheetState]=useState<SheetState>("disconnected");
   const [sheetError,setSheetError]=useState("");
   const [editTarget,setEditTarget]=useState<Transaction|null>(null);
-  const [editDraft,setEditDraft]=useState({amount:"",description:"",direction:"OUT" as Direction,date:todayKey()});
+  const [editDraft,setEditDraft]=useState({amount:"",description:"",direction:"OUT" as Direction,date:todayKey(),walletId:""});
   const [deleteTarget,setDeleteTarget]=useState<Transaction|null>(null);
   const [profile,setProfile]=useState<CashbookProfile>({...DEFAULT_PROFILE});
   const [profileDraft,setProfileDraft]=useState<CashbookProfile>({...DEFAULT_PROFILE});
   const [profileOpen,setProfileOpen]=useState(false);
+  const [walletOpen,setWalletOpen]=useState(false);
+  const [walletDraft,setWalletDraft]=useState<Wallet>({id:"",type:"cash",name:"",bankName:""});
+  const [transferOpen,setTransferOpen]=useState(false);
+  const [transferDraft,setTransferDraft]=useState({fromWalletId:"",toWalletId:"",amount:"",note:""});
   const [onboardingStep,setOnboardingStep]=useState(0);
   const [cloudState,setCloudState]=useState<CloudState>("device");
   const [cloudReadyUser,setCloudReadyUser]=useState("");
@@ -102,12 +108,17 @@ export default function CashApp(){
   const cloudSaveTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
 
   useEffect(()=>{
-    const saved=localStorage.getItem("ai-cash-v1"); const savedTransactions:Transaction[]=saved?JSON.parse(saved):[];if(saved)setTransactions(savedTransactions);
-    const savedClosings=localStorage.getItem("hisaab-closings"); if(savedClosings) setClosings(JSON.parse(savedClosings));
+    const saved=localStorage.getItem("ai-cash-v1"); const rawTransactions=saved?JSON.parse(saved):[];
     const savedProfile=localStorage.getItem("hisaab-profile-v2");
-    if(savedProfile){const next=normalizeProfile(JSON.parse(savedProfile));setProfile(next);setProfileDraft(next);if(!next.onboardingComplete)setOnboardingStep(1)}
-    else if(savedTransactions.length){const migrated={...DEFAULT_PROFILE,onboardingComplete:true};setProfile(migrated);setProfileDraft(migrated);localStorage.setItem("hisaab-profile-v2",JSON.stringify(migrated))}
-    else setOnboardingStep(1);
+    let nextProfile=savedProfile?normalizeProfile(JSON.parse(savedProfile)):normalizeProfile(DEFAULT_PROFILE);
+    if(!savedProfile&&rawTransactions.length)nextProfile={...nextProfile,onboardingComplete:true};
+    const migratedTransactions=migrateWalletTransactions<Transaction>(rawTransactions,nextProfile.activeWalletId);
+    setTransactions(migratedTransactions);
+    const savedClosings=localStorage.getItem("hisaab-closings");
+    if(savedClosings)setClosings((JSON.parse(savedClosings) as Array<Partial<Closing>>).map(c=>({...c,walletId:c.walletId||nextProfile.activeWalletId}) as Closing));
+    setProfile(nextProfile);setProfileDraft(nextProfile);
+    if(!nextProfile.onboardingComplete)setOnboardingStep(1);
+    if(!savedProfile&&rawTransactions.length)localStorage.setItem("hisaab-profile-v2",JSON.stringify(nextProfile));
     setSpreadsheetId(localStorage.getItem("hisaab-sheet-id")||""); setHydrated(true);
     const config=window.APP_CONFIG||{};
     if(config.supabaseUrl&&config.supabasePublishableKey&&!config.supabaseUrl.includes("YOUR_")){
@@ -136,8 +147,10 @@ export default function CashApp(){
     cloudLoadedForUser.current=session.user.id;
     void loadCloudCashbook<Transaction,Closing>(supabase).then(remote=>{
       if(remote&&transactions.length===0&&closings.length===0){
-        setTransactions(remote.transactions||[]);setClosings(remote.closings||[]);
-        if(remote.profile){const restored=normalizeProfile(remote.profile);setProfile(restored);setProfileDraft(restored);setOnboardingStep(restored.onboardingComplete?0:1)}
+        const restored=remote.profile?normalizeProfile(remote.profile):normalizeProfile(DEFAULT_PROFILE);
+        setTransactions(migrateWalletTransactions<Transaction>(remote.transactions||[],restored.activeWalletId));
+        setClosings((remote.closings||[]).map(c=>({...c,walletId:c.walletId||restored.activeWalletId})));
+        if(remote.profile){setProfile(restored);setProfileDraft(restored);setOnboardingStep(restored.onboardingComplete?0:1)}
         if(remote.spreadsheetId&&!spreadsheetId){setSpreadsheetId(remote.spreadsheetId);localStorage.setItem("hisaab-sheet-id",remote.spreadsheetId)}
       }
       setCloudReadyUser(session.user.id);setCloudState("saved");
@@ -163,17 +176,22 @@ export default function CashApp(){
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[hydrated,googleToken]);
 
+  const selectedWallet=activeWallet(profile);
+  const availableWallets=profile.wallets.filter(wallet=>!wallet.archived);
+  const selectedTransactions=walletTransactions(transactions,selectedWallet.id);
+  const walletNames=Object.fromEntries(profile.wallets.map(wallet=>[wallet.id,walletLabel(wallet)]));
+  const walletIdsByLabel=Object.fromEntries(profile.wallets.map(wallet=>[walletLabel(wallet).toLocaleLowerCase(),wallet.id]));
   const totals=useMemo(()=>{
-    const received=transactions.filter(t=>t.direction==="IN").reduce((a,t)=>a+t.amount,0);
-    const spent=transactions.filter(t=>t.direction==="OUT").reduce((a,t)=>a+t.amount,0);
-    const todays=transactions.filter(t=>t.date===todayKey());
+    const received=selectedTransactions.filter(t=>t.direction==="IN").reduce((a,t)=>a+t.amount,0);
+    const spent=selectedTransactions.filter(t=>t.direction==="OUT").reduce((a,t)=>a+t.amount,0);
+    const todays=selectedTransactions.filter(t=>t.date===todayKey());
     const todayIn=todays.filter(t=>t.direction==="IN").reduce((a,t)=>a+t.amount,0);
     const todayOut=todays.filter(t=>t.direction==="OUT").reduce((a,t)=>a+t.amount,0);
     return {received,spent,balance:received-spent,todayIn,todayOut,todays};
-  },[transactions]);
-  const todayClosing=closings.find(c=>c.date===todayKey());
-  const openingEntry=currentOpeningBalance(transactions);
-  const openingEntryCount=openingBalanceEntries(transactions).length;
+  },[selectedTransactions]);
+  const todayClosing=closings.find(c=>c.date===todayKey()&&c.walletId===selectedWallet.id);
+  const openingEntry=currentOpeningBalance(transactions,selectedWallet.id);
+  const openingEntryCount=openingBalanceEntries(transactions,selectedWallet.id).length;
   const filtered=transactions.filter(t=>t.description.toLowerCase().includes(query.toLowerCase()));
   const formatMoney=(value:number)=>money(value,profile.currency);
   const formatSigned=(value:number)=>signedMoney(value,profile.currency);
@@ -187,8 +205,9 @@ export default function CashApp(){
   }
 
   const normalizedSheetRows=(rows:unknown[][])=>JSON.stringify(rows.map(row=>row.map(cell=>String(cell??""))));
+  const rowsForSheet=(list:Transaction[])=>transactionRows(list.map(t=>({...t,walletName:walletNames[t.walletId]||"Archived wallet"})));
   async function readSheetRows(token:string,sheetId:string){
-    const response=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Transactions!A2:J`,{headers:{Authorization:`Bearer ${token}`}});
+    const response=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Transactions!A2:K`,{headers:{Authorization:`Bearer ${token}`}});
     if(!response.ok)throw new Error(await googleApiError(response,"Google Sheet could not be checked for changes"));
     return ((await response.json()).values||[]) as unknown[][];
   }
@@ -200,18 +219,18 @@ export default function CashApp(){
       const savedSnapshot=localStorage.getItem("hisaab-sheet-snapshot");
       const remoteChanged=savedSnapshot
         ? normalizedSheetRows(remoteRows)!==savedSnapshot
-        : Boolean(compareSheetTransactions(list,parseSheetRows<Transaction>(remoteRows)));
+        : Boolean(compareSheetTransactions(list,parseSheetRows<Transaction>(remoteRows,walletIdsByLabel)));
       if(remoteChanged){
-        const parsed=parseSheetRows<Transaction>(remoteRows);const conflict=compareSheetTransactions(list,parsed);
+        const parsed=parseSheetRows<Transaction>(remoteRows,walletIdsByLabel);const conflict=compareSheetTransactions(list,parsed);
         if(conflict){setSheetConflict(conflict);setSheetError("Changes were found in Google Sheets. Review them before syncing.");return false}
       }
     }
-    const heading=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Transactions!A1:J1?valueInputOption=RAW`,{method:"PUT",headers,body:JSON.stringify({values:[transactionHeadersFor(profile.currency)]})});
+    const heading=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Transactions!A1:K1?valueInputOption=RAW`,{method:"PUT",headers,body:JSON.stringify({values:[transactionHeadersFor(profile.currency)]})});
     if(!heading.ok)return false;
     const cleared=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Transactions!A2:Z:clear`,{method:"POST",headers});
     if(!cleared.ok)return false;
-    const rows=transactionRows(list);if(!rows.length){localStorage.setItem("hisaab-sheet-snapshot",normalizedSheetRows([]));return true}
-    const written=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Transactions!A2:J?valueInputOption=USER_ENTERED`,{method:"PUT",headers,body:JSON.stringify({values:rows})});
+    const rows=rowsForSheet(list);if(!rows.length){localStorage.setItem("hisaab-sheet-snapshot",normalizedSheetRows([]));return true}
+    const written=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Transactions!A2:K?valueInputOption=USER_ENTERED`,{method:"PUT",headers,body:JSON.stringify({values:rows})});
     if(written.ok)localStorage.setItem("hisaab-sheet-snapshot",normalizedSheetRows(rows));
     return written.ok;
   }
@@ -221,8 +240,8 @@ export default function CashApp(){
     if(!token||!spreadsheetId){notify("Reconnect Google Sheets to check changes");return}
     setCheckingSheet(true);setSheetError("");
     try{
-      const rows=await readSheetRows(token,spreadsheetId);const parsed=parseSheetRows<Transaction>(rows);const conflict=compareSheetTransactions(transactions,parsed);
-      if(conflict)setSheetConflict(conflict);else{localStorage.setItem("hisaab-sheet-snapshot",normalizedSheetRows(transactionRows(transactions)));notify("Google Sheet matches the app")}
+      const rows=await readSheetRows(token,spreadsheetId);const parsed=parseSheetRows<Transaction>(rows,walletIdsByLabel);const conflict=compareSheetTransactions(transactions,parsed);
+      if(conflict)setSheetConflict(conflict);else{localStorage.setItem("hisaab-sheet-snapshot",normalizedSheetRows(rowsForSheet(transactions)));notify("Google Sheet matches the app")}
     }catch(error){const message=error instanceof Error?error.message:"Could not check Google Sheet";setSheetError(message);notify(message)}
     finally{setCheckingSheet(false)}
   }
@@ -237,7 +256,7 @@ export default function CashApp(){
   function importSheetChanges(){
     if(!sheetConflict)return;
     const imported=sheetConflict.sheetTransactions.map(t=>({...t,status:"Synced" as const}));
-    setTransactions(imported);localStorage.setItem("hisaab-sheet-snapshot",normalizedSheetRows(transactionRows(imported)));
+    setTransactions(imported);localStorage.setItem("hisaab-sheet-snapshot",normalizedSheetRows(rowsForSheet(imported)));
     setSheetConflict(null);setSheetError("");notify("Google Sheet changes imported");
   }
   async function ensureClosingSheet(token:string,sheetId:string){
@@ -245,12 +264,12 @@ export default function CashApp(){
     const meta=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties.title`,{headers});if(!meta.ok)throw new Error(await googleApiError(meta,"Google could not read the cashbook"));
     const titles=((await meta.json()).sheets||[]).map((s:{properties:{title:string}})=>s.properties.title);
     if(!titles.includes("Daily Closings")){const added=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}:batchUpdate`,{method:"POST",headers,body:JSON.stringify({requests:[{addSheet:{properties:sheetProperties("Daily Closings")}}]})});if(!added.ok)throw new Error(await googleApiError(added,"Google could not add the closing sheet"))}
-    const heading=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/'Daily Closings'!A1:G1?valueInputOption=RAW`,{method:"PUT",headers,body:JSON.stringify({values:[["Date","Closed at","Expected cash","Counted cash","Difference","Entries","Note"]]})});if(!heading.ok)throw new Error(await googleApiError(heading,"Google could not prepare the closing sheet"));return true;
+    const heading=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/'Daily Closings'!A1:H1?valueInputOption=RAW`,{method:"PUT",headers,body:JSON.stringify({values:[["Date","Wallet","Closed at","Expected balance","Counted balance","Difference","Entries","Note"]]})});if(!heading.ok)throw new Error(await googleApiError(heading,"Google could not prepare the closing sheet"));return true;
   }
-  async function appendClosingToSheet(c:Closing){if(!googleToken||!spreadsheetId)return;await ensureClosingSheet(googleToken,spreadsheetId);await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'Daily Closings'!A:G:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:"POST",headers:{Authorization:`Bearer ${googleToken}`,"Content-Type":"application/json"},body:JSON.stringify({values:[[c.date,c.closedAt,c.expected,c.counted,c.difference,totals.todays.length,c.note]]})})}
+  async function appendClosingToSheet(c:Closing){if(!googleToken||!spreadsheetId)return;await ensureClosingSheet(googleToken,spreadsheetId);await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'Daily Closings'!A:H:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:"POST",headers:{Authorization:`Bearer ${googleToken}`,"Content-Type":"application/json"},body:JSON.stringify({values:[[c.date,walletNames[c.walletId]||"Wallet",c.closedAt,c.expected,c.counted,c.difference,totals.todays.length,c.note]]})})}
   async function addTransaction(data:ReturnType<typeof parseNatural>,source:Source){
     if(data.direction==="OUT"&&data.amount>totals.balance){notify(`Not enough balance · available ${formatMoney(totals.balance)}`);return}
-    const now=new Date(); const row:Transaction={id:Date.now(),amount:data.amount,description:data.description,direction:data.direction,action:data.action,date:todayKey(),time:now.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"}),source,status:googleToken?"Pending":"Local"};
+    const now=new Date(); const row:Transaction={id:Date.now(),amount:data.amount,description:data.description,direction:data.direction,action:data.action,date:todayKey(),time:now.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"}),source,status:googleToken?"Pending":"Local",walletId:selectedWallet.id};
     const next=[row,...transactions];setTransactions(next);closeEntry();notify(`${formatMoney(row.amount)} recorded`);
     if(googleToken&&spreadsheetId){try{const synced=await syncAllTransactions(next);setTransactions(prev=>prev.map(t=>t.id===row.id?{...t,status:synced?"Synced":"Pending"}:t));if(!synced)notify("Saved on device · Sheets sync pending")}catch{notify("Saved on device · reconnect Sheets to sync")}}
   }
@@ -266,52 +285,91 @@ export default function CashApp(){
   }
   function submitManual(e:FormEvent){e.preventDefault();const amount=Number(manual.amount);if(!amount||!manual.description.trim())return;void addTransaction({amount,description:manual.description,direction:manual.direction,action:manual.direction==="IN"?"Received":"Spent",ambiguous:false},"Manual");setManual({amount:"",description:"",direction:"OUT"})}
   function openOpeningBalance(){
-    const existing=currentOpeningBalance(transactions);
+    const existing=currentOpeningBalance(transactions,selectedWallet.id);
     setOpeningAmount(existing?String(existing.amount):"");
     setOpeningDate(existing?.date||todayKey());
     setOpeningOpen(true);
   }
   async function saveOpening(e:FormEvent){
     e.preventDefault();const amount=Number(openingAmount);if(!amount||!openingDate)return;
-    const existing=currentOpeningBalance(transactions);const now=new Date();
-    const row:Transaction={id:existing?.id||Date.now(),amount,description:"Opening balance",direction:"IN",action:"Opening balance",date:openingDate,time:existing?.time||now.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"}),source:"Opening",status:googleToken?"Pending":"Local"};
-    const next=replaceOpeningBalance(transactions,row);
-    const nextBalance=next.reduce((sum,t)=>sum+(t.direction==="IN"?t.amount:-t.amount),0);
+    const existing=currentOpeningBalance(transactions,selectedWallet.id);const now=new Date();
+    const row:Transaction={id:existing?.id||Date.now(),amount,description:"Opening balance",direction:"IN",action:"Opening balance",date:openingDate,time:existing?.time||now.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"}),source:"Opening",status:googleToken?"Pending":"Local",walletId:selectedWallet.id};
+    const next=replaceOpeningBalance(transactions,row,selectedWallet.id);
+    const nextBalance=walletBalance(next,selectedWallet.id);
     if(nextBalance<0){notify(`Opening balance is too low · increase it by at least ${formatMoney(Math.abs(nextBalance))}`);return}
     setTransactions(next);setOpeningOpen(false);notify(existing||openingEntryCount>1?"Opening balance updated":"Opening balance saved");
     if(googleToken&&spreadsheetId){try{const ok=await syncAllTransactions(next);setTransactions(prev=>prev.map(t=>({...t,status:ok?"Synced":"Pending"})));if(!ok)notify("Saved on device · Sheets sync pending")}catch{notify("Saved on device · Sheets sync pending")}}
   }
-  function openEdit(t:Transaction){if(isOpeningBalanceEntry(t)){openOpeningBalance();return}setEditTarget(t);setEditDraft({amount:String(t.amount),description:t.description,direction:t.direction,date:t.date})}
+  function openEdit(t:Transaction){if(t.transferId){notify("Edit a transfer by deleting it and recording it again");return}if(isOpeningBalanceEntry(t)){const nextProfile=withActiveWallet(profile,t.walletId);setProfile(nextProfile);setProfileDraft(nextProfile);setOpeningAmount(String(t.amount));setOpeningDate(t.date);setOpeningOpen(true);return}setEditTarget(t);setEditDraft({amount:String(t.amount),description:t.description,direction:t.direction,date:t.date,walletId:t.walletId})}
   async function saveEdit(e:FormEvent){
     e.preventDefault();if(!editTarget)return;const amount=Number(editDraft.amount);if(!amount||!editDraft.description.trim())return;
-    const next:Transaction[]=transactions.map(t=>t.id===editTarget.id?{...t,amount,description:editDraft.description.trim(),direction:editDraft.direction,action:editDraft.direction==="IN"?"Received":"Spent",date:editDraft.date,status:googleToken?"Pending":"Local"}:t);
-    if(!canEditTransaction(transactions,editTarget,{direction:editDraft.direction,amount})){notify(`This edit would exceed the available balance`);return}
+    const next:Transaction[]=transactions.map(t=>t.id===editTarget.id?{...t,amount,description:editDraft.description.trim(),direction:editDraft.direction,action:editDraft.direction==="IN"?"Received":"Spent",date:editDraft.date,walletId:editDraft.walletId,status:googleToken?"Pending":"Local"}:t);
+    const affectedWallets=new Set([editTarget.walletId,editDraft.walletId]);
+    const invalid=[...affectedWallets].some(walletId=>{
+      const before=walletBalance(transactions,walletId);const after=walletBalance(next,walletId);
+      return after<0&&after<before;
+    });
+    if(invalid){notify(`This edit would exceed the available balance`);return}
     setTransactions(next);setEditTarget(null);notify("Transaction updated");
     if(googleToken&&spreadsheetId){try{const ok=await syncAllTransactions(next);setTransactions(prev=>prev.map(t=>({...t,status:ok?"Synced":"Pending"})));if(!ok)notify("Updated on device · Sheets sync pending")}catch{notify("Updated on device · Sheets sync pending")}}
   }
   async function confirmDelete(){
-    if(!deleteTarget)return;const next=transactions.filter(t=>t.id!==deleteTarget.id);
-    if(!canDeleteTransaction(transactions,deleteTarget)){notify("Cannot delete this money-in entry because the balance would become negative");return}
+    if(!deleteTarget)return;const deleting=deleteTarget.transferId?transferEntries(transactions,deleteTarget.transferId):[deleteTarget];const deletingIds=new Set(deleting.map(t=>t.id));const next=transactions.filter(t=>!deletingIds.has(t.id));
+    const affectedWallets=new Set(deleting.map(t=>t.walletId));const invalid=[...affectedWallets].some(walletId=>{const before=walletBalance(transactions,walletId);const after=walletBalance(next,walletId);return after<0&&after<before});
+    if(invalid||(!deleteTarget.transferId&&!canDeleteTransaction(walletTransactions(transactions,deleteTarget.walletId),deleteTarget))){notify("Cannot delete this entry because a wallet balance would become negative");return}
     setTransactions(next);setDeleteTarget(null);notify("Transaction deleted");
     if(googleToken&&spreadsheetId){try{const ok=await syncAllTransactions(next);setTransactions(prev=>prev.map(t=>({...t,status:ok?"Synced":"Pending"})));if(!ok)notify("Deleted on device · Sheets sync pending")}catch{notify("Deleted on device · Sheets sync pending")}}
   }
-  async function saveClosing(e:FormEvent){e.preventDefault();const counted=Number(countedCash);if(countedCash==="")return;const closing:Closing={date:todayKey(),expected:totals.balance,counted,difference:counted-totals.balance,note:closingNote,closedAt:new Date().toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})};setClosings(prev=>[closing,...prev.filter(c=>c.date!==closing.date)]);setClosingOpen(false);setCountedCash("");setClosingNote("");try{await appendClosingToSheet(closing)}catch{}notify(closing.difference===0?"Day closed · cash tallied":"Day closed · difference recorded")}
+  async function saveClosing(e:FormEvent){e.preventDefault();const counted=Number(countedCash);if(countedCash==="")return;const closing:Closing={date:todayKey(),expected:totals.balance,counted,difference:counted-totals.balance,note:closingNote,closedAt:new Date().toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"}),walletId:selectedWallet.id};setClosings(prev=>[closing,...prev.filter(c=>!(c.date===closing.date&&c.walletId===closing.walletId))]);setClosingOpen(false);setCountedCash("");setClosingNote("");try{await appendClosingToSheet(closing)}catch{}notify(closing.difference===0?"Wallet closed · balance tallied":"Wallet closed · difference recorded")}
+
+  function selectWallet(walletId:string){const next=withActiveWallet(profile,walletId);setProfile(next);setProfileDraft(next)}
+  function openNewWallet(){setWalletDraft({id:"",type:"cash",name:"",bankName:""});setWalletOpen(true)}
+  function openWalletEdit(wallet:Wallet){setWalletDraft({...wallet});setWalletOpen(true)}
+  function saveWallet(e:FormEvent){
+    e.preventDefault();const clean={...walletDraft,name:walletDraft.name.trim(),bankName:walletDraft.type==="bank"?walletDraft.bankName.trim():""};
+    if(!walletIsValid(clean)){notify(clean.type==="bank"?"Enter the bank and account names":"Enter a wallet name");return}
+    if(!uniqueWalletName(profile.wallets,clean.name,clean.id)){notify("Use a different wallet name");return}
+    const id=clean.id||`wallet-${Date.now()}`;const existing=profile.wallets.find(w=>w.id===id);
+    const wallets=existing?profile.wallets.map(w=>w.id===id?{...clean,id}:w):[...profile.wallets,{...clean,id}];
+    const next=withActiveWallet({...profile,wallets},id);setProfile(next);setProfileDraft(next);setWalletOpen(false);notify(existing?"Wallet updated":"Wallet added");
+    if(googleToken&&spreadsheetId)void syncAllTransactions(transactions,googleToken,spreadsheetId,true);
+  }
+  function archiveWallet(wallet:Wallet){
+    if(availableWallets.length<=1){notify("Keep at least one active wallet");return}
+    if(walletBalance(transactions,wallet.id)!==0){notify("A wallet can only be archived when its balance is zero");return}
+    const wallets=profile.wallets.map(item=>item.id===wallet.id?{...item,archived:true}:item);const next=withActiveWallet({...profile,wallets},availableWallets.find(item=>item.id!==wallet.id)?.id||"");setProfile(next);setProfileDraft(next);notify("Wallet archived");
+  }
+  function openTransfer(){
+    if(availableWallets.length<2){notify("Add another wallet before making a transfer");return}
+    setTransferDraft({fromWalletId:selectedWallet.id,toWalletId:availableWallets.find(w=>w.id!==selectedWallet.id)?.id||"",amount:"",note:""});setTransferOpen(true);
+  }
+  async function saveTransfer(e:FormEvent){
+    e.preventDefault();const amount=Number(transferDraft.amount);const from=profile.wallets.find(w=>w.id===transferDraft.fromWalletId);const to=profile.wallets.find(w=>w.id===transferDraft.toWalletId);
+    if(!from||!to||from.id===to.id||!amount)return;
+    const available=walletBalance(transactions,from.id);if(amount>available){notify(`Not enough balance · available ${formatMoney(available)}`);return}
+    const now=new Date();const base=Date.now();const transferId=`transfer-${base}`;const time=now.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"});const note=transferDraft.note.trim();
+    const outgoing:Transaction={id:base,amount,description:note||`Transfer to ${walletLabel(to)}`,direction:"OUT",action:"Transfer out",date:todayKey(),time,source:"Transfer",status:googleToken?"Pending":"Local",walletId:from.id,transferId};
+    const incoming:Transaction={...outgoing,id:base+1,description:note||`Transfer from ${walletLabel(from)}`,direction:"IN",action:"Transfer in",walletId:to.id};
+    const next=[incoming,outgoing,...transactions];setTransactions(next);setTransferOpen(false);notify(`${formatMoney(amount)} transferred`);
+    if(googleToken&&spreadsheetId){try{const ok=await syncAllTransactions(next);setTransactions(prev=>prev.map(t=>t.transferId===transferId?{...t,status:ok?"Synced":"Pending"}:t))}catch{notify("Transfer saved · Sheets sync pending")}}
+  }
 
   function openProfileSettings(){setProfileDraft({...profile});setProfileOpen(true)}
   function saveProfileSettings(e:FormEvent){
     e.preventDefault();
-    const clean={...profileDraft,walletName:profileDraft.walletName.trim(),bankName:profileDraft.walletType==="bank"?profileDraft.bankName.trim():""};
-    if(!profileIsValid(clean)){notify(clean.walletType==="bank"?"Enter the bank name and account name":"Enter a wallet name");return}
-    setProfile(clean);setProfileDraft(clean);setProfileOpen(false);notify("Currency and wallet updated");
+    const clean={...profileDraft};
+    if(!profileIsValid(clean)){notify("Check your wallet details");return}
+    setProfile(clean);setProfileDraft(clean);setProfileOpen(false);notify("Currency updated");
     if(googleToken&&spreadsheetId)void syncAllTransactions(transactions,googleToken,spreadsheetId,true);
   }
   function advanceOnboarding(){
-    if(onboardingStep===2&&!profileIsValid(profileDraft)){notify(profileDraft.walletType==="bank"?"Enter the bank name and account name":"Enter a wallet name");return}
+    if(onboardingStep===2&&(!profileDraft.walletName.trim()||(profileDraft.walletType==="bank"&&!profileDraft.bankName.trim()))){notify(profileDraft.walletType==="bank"?"Enter the bank name and account name":"Enter a wallet name");return}
     setOnboardingStep(step=>Math.min(3,step+1));
   }
   function completeOnboarding(){
-    const clean={...profileDraft,walletName:profileDraft.walletName.trim(),bankName:profileDraft.walletType==="bank"?profileDraft.bankName.trim():"",onboardingComplete:true};
-    if(!profileIsValid(clean)){setOnboardingStep(2);notify("Complete your wallet details first");return false}
+    const wallet={id:profileDraft.wallets[0]?.id||"wallet-cash",type:profileDraft.walletType,name:profileDraft.walletName.trim(),bankName:profileDraft.walletType==="bank"?profileDraft.bankName.trim():""};
+    const clean={...profileDraft,wallets:[wallet],activeWalletId:wallet.id,walletName:wallet.name,bankName:wallet.bankName,onboardingComplete:true};
+    if(!walletIsValid(wallet)){setOnboardingStep(2);notify("Complete your wallet details first");return false}
     setProfile(clean);setProfileDraft(clean);setOnboardingStep(0);return true;
   }
   async function connectFromOnboarding(){if(completeOnboarding())await connectGoogle()}
@@ -351,8 +409,9 @@ export default function CashApp(){
     {tab==="home"&&<section className="screen home-screen">
       <Header title="Cashbook"/>
       <div className="date-row"><span>{new Intl.DateTimeFormat("en-PK",{weekday:"long",day:"numeric",month:"long"}).format(new Date())}</span><span className="currency">{profile.currency}</span></div>
+      <div className="wallet-switcher" aria-label="Choose wallet">{availableWallets.map(wallet=><button key={wallet.id} className={wallet.id===selectedWallet.id?"active":""} onClick={()=>selectWallet(wallet.id)}>{wallet.type==="bank"?<Landmark/>:<WalletCards/>}<span>{wallet.name}<small>{display(walletBalance(transactions,wallet.id))}</small></span></button>)}<button className="add-wallet" onClick={openNewWallet} aria-label="Add wallet"><Plus/></button></div>
       <section className="balance-card">
-        <div className="balance-label"><span>Current balance</span><button onClick={()=>setHidden(v=>!v)} aria-label={hidden?"Show balance":"Hide balance"}>{hidden?<EyeOff/>:<Eye/>}</button></div>
+        <div className="balance-label"><span>{walletLabel(selectedWallet)} balance</span><button onClick={()=>setHidden(v=>!v)} aria-label={hidden?"Show balance":"Hide balance"}>{hidden?<EyeOff/>:<Eye/>}</button></div>
         <h2>{display(totals.balance)}</h2>
         <div className="today-flow"><div><span className="flow-dot in"><ArrowDownLeft/></span><p>Money in<strong>{display(totals.todayIn)}</strong></p></div><div><span className="flow-dot out"><ArrowUpRight/></span><p>Money out<strong>{display(totals.todayOut)}</strong></p></div></div>
       </section>
@@ -365,26 +424,31 @@ export default function CashApp(){
         <button className="entry-action voice" onClick={()=>openEntry("voice")}><span><Mic/></span><strong>Voice</strong><small>Tap & speak</small></button>
         <button className="entry-action manual" onClick={()=>openEntry("manual")}><span><PenLine/></span><strong>Manual</strong><small>Fill details</small></button>
       </div>
+      <button className="transfer-button" onClick={openTransfer}><ArrowRightLeft/><span><strong>Transfer between wallets</strong><small>Move money without changing total balance</small></span><ChevronRight/></button>
 
       <button className={`closing-card ${todayClosing?"closed":""}`} onClick={()=>todayClosing?setTab("insights"):setClosingOpen(true)}>
-        <span>{todayClosing?<CircleCheck/>:<ClipboardCheck/>}</span><div><strong>{todayClosing?"Today is closed":profile.walletType==="bank"?"Close today’s account":"Close today’s cash"}</strong><small>{todayClosing?`${todayClosing.closedAt} · ${todayClosing.difference===0?"Balance tallied":`${formatSigned(todayClosing.difference)} difference`}`:profile.walletType==="bank"?`Tally ${totals.todays.length} entries with the bank balance`:`Tally ${totals.todays.length} entries with cash in hand`}</small></div><ChevronRight/>
+        <span>{todayClosing?<CircleCheck/>:<ClipboardCheck/>}</span><div><strong>{todayClosing?`${selectedWallet.name} is closed`:selectedWallet.type==="bank"?"Close today’s account":"Close today’s cash"}</strong><small>{todayClosing?`${todayClosing.closedAt} · ${todayClosing.difference===0?"Balance tallied":`${formatSigned(todayClosing.difference)} difference`}`:selectedWallet.type==="bank"?`Tally ${totals.todays.length} entries with the bank balance`:`Tally ${totals.todays.length} entries with cash in hand`}</small></div><ChevronRight/>
       </button>
-      {!!transactions.length&&<div className="recent-mini"><div className="mini-head"><h3>Recent</h3><button onClick={()=>setTab("history")}>See all</button></div>{transactions.slice(0,3).map(t=><TransactionRow key={t.id} t={t} currency={profile.currency}/>)}</div>}
+      {!!selectedTransactions.length&&<div className="recent-mini"><div className="mini-head"><h3>Recent in {selectedWallet.name}</h3><button onClick={()=>setTab("history")}>See all</button></div>{selectedTransactions.slice(0,3).map(t=><TransactionRow key={t.id} t={t} currency={profile.currency}/>)}</div>}
     </section>}
 
-    {tab==="history"&&<section className="screen"><Header title="History" back/><div className="search-box"><Search/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search transactions"/></div><div className="history-summary"><span>{filtered.length} entries</span><strong>{formatSigned(filtered.reduce((a,t)=>a+(t.direction==="IN"?t.amount:-t.amount),0))}</strong></div><div className="history-list">{!filtered.length?<Empty icon={<History/>} title="No transactions yet" text="Your recorded entries will appear here."/>:filtered.map(t=><TransactionRow key={t.id} t={t} currency={profile.currency} showDate actions onEdit={()=>openEdit(t)} onDelete={isOpeningBalanceEntry(t)?undefined:()=>setDeleteTarget(t)}/>)}</div></section>}
+    {tab==="history"&&<section className="screen"><Header title="History" back/><div className="search-box"><Search/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search all wallets"/></div><div className="history-summary"><span>{filtered.length} entries · all wallets</span><strong>{formatSigned(totalBalance(filtered))}</strong></div><div className="history-list">{!filtered.length?<Empty icon={<History/>} title="No transactions yet" text="Your recorded entries will appear here."/>:filtered.map(t=><TransactionRow key={t.id} t={t} currency={profile.currency} walletName={walletNames[t.walletId]} showDate actions onEdit={()=>openEdit(t)} onDelete={isOpeningBalanceEntry(t)?undefined:()=>setDeleteTarget(t)}/>)}</div></section>}
 
-    {tab==="insights"&&<section className="screen"><Header title="Insights" back/><section className="insight-hero"><small>ALL-TIME CASH FLOW</small><h2>{formatSigned(totals.balance)}</h2><div><span>Money in <strong>{formatMoney(totals.received)}</strong></span><span>Money out <strong>{formatMoney(totals.spent)}</strong></span></div></section><div className="section-title compact"><div><small>DAILY CLOSINGS</small><h2>Tally history</h2></div><CalendarDays/></div>{!closings.length?<Empty icon={<ClipboardCheck/>} title="No closing summary yet" text="Close a day to keep a record of expected and counted balance."/>:<div className="closing-list">{closings.map(c=><article key={c.date}><span className={c.difference===0?"match":"difference"}>{c.difference===0?<Check/>:<Info/>}</span><div><strong>{new Date(`${c.date}T12:00:00`).toLocaleDateString("en-PK",{day:"numeric",month:"long",year:"numeric"})}</strong><small>Expected {formatMoney(c.expected)} · Counted {formatMoney(c.counted)}</small></div><b>{c.difference===0?"Tallied":formatSigned(c.difference)}</b></article>)}</div>}</section>}
+    {tab==="insights"&&<section className="screen"><Header title="Insights" back/><section className="insight-hero"><small>TOTAL ACROSS ALL WALLETS</small><h2>{formatSigned(totalBalance(transactions))}</h2><div><span>Active wallets <strong>{availableWallets.length}</strong></span><span>Transactions <strong>{transactions.length}</strong></span></div></section><div className="wallet-balance-list">{availableWallets.map(wallet=><button key={wallet.id} onClick={()=>{selectWallet(wallet.id);setTab("home")}}><span>{wallet.type==="bank"?<Landmark/>:<WalletCards/>}</span><div><strong>{walletLabel(wallet)}</strong><small>{wallet.type==="bank"?"Bank account":"Cash wallet"}</small></div><b>{formatMoney(walletBalance(transactions,wallet.id))}</b></button>)}</div><div className="section-title compact"><div><small>DAILY CLOSINGS</small><h2>Tally history</h2></div><CalendarDays/></div>{!closings.length?<Empty icon={<ClipboardCheck/>} title="No closing summary yet" text="Close a wallet to keep a record of expected and counted balance."/>:<div className="closing-list">{closings.map(c=><article key={`${c.walletId}-${c.date}`}><span className={c.difference===0?"match":"difference"}>{c.difference===0?<Check/>:<Info/>}</span><div><strong>{new Date(`${c.date}T12:00:00`).toLocaleDateString("en-PK",{day:"numeric",month:"long",year:"numeric"})}</strong><small>{walletNames[c.walletId]||"Wallet"} · Expected {formatMoney(c.expected)} · Counted {formatMoney(c.counted)}</small></div><b>{c.difference===0?"Tallied":formatSigned(c.difference)}</b></article>)}</div>}</section>}
 
     {tab==="settings"&&<section className="screen">
       <Header title="Settings" back/>
       <div className="settings-group"><small>ACCOUNT & CURRENCY</small>
         <button onClick={openProfileSettings}><span><Banknote/></span><div><strong>Currency</strong><small>{profile.currency} · Amounts shown as {currencyPrefix(profile.currency)}</small></div><ChevronRight/></button>
-        <button onClick={openProfileSettings}><span>{profile.walletType==="bank"?<Landmark/>:<WalletCards/>}</span><div><strong>{profile.walletType==="bank"?profile.bankName:profile.walletName}</strong><small>{profile.walletType==="bank"?`Bank · ${profile.walletName}`:"Cash wallet"}</small></div><ChevronRight/></button>
+      </div>
+      <div className="settings-group wallet-settings"><small>WALLETS</small>
+        {availableWallets.map(wallet=><button key={wallet.id} onClick={()=>openWalletEdit(wallet)}><span>{wallet.type==="bank"?<Landmark/>:<WalletCards/>}</span><div><strong>{walletLabel(wallet)}</strong><small>{formatMoney(walletBalance(transactions,wallet.id))} · {wallet.id===selectedWallet.id?"Currently selected":wallet.type==="bank"?"Bank account":"Cash wallet"}</small></div><ChevronRight/></button>)}
+        <button onClick={openNewWallet}><span><Plus/></span><div><strong>Add another wallet</strong><small>Cash, bank, mobile wallet, or petty cash</small></div><ChevronRight/></button>
+        <button onClick={openTransfer}><span><ArrowRightLeft/></span><div><strong>Transfer between wallets</strong><small>Move money without recording income or expense</small></div><ChevronRight/></button>
       </div>
       <div className="settings-group"><small>CASHBOOK</small>
-        <button onClick={openOpeningBalance}><span><Landmark/></span><div><strong>{openingEntry?"Edit opening balance":"Add opening balance"}</strong><small>{openingEntry?`${formatMoney(openingEntry.amount)} · ${new Date(`${openingEntry.date}T12:00:00`).toLocaleDateString("en-PK",{day:"numeric",month:"short",year:"numeric"})}`:"Record starting balance and date once"}</small></div><ChevronRight/></button>
-        <button onClick={()=>setClosingOpen(true)}><span><ClipboardCheck/></span><div><strong>Daily closing summary</strong><small>Count and tally today’s balance</small></div><ChevronRight/></button>
+        <button onClick={openOpeningBalance}><span><Landmark/></span><div><strong>{openingEntry?`Edit ${selectedWallet.name} opening balance`:`Add ${selectedWallet.name} opening balance`}</strong><small>{openingEntry?`${formatMoney(openingEntry.amount)} · ${new Date(`${openingEntry.date}T12:00:00`).toLocaleDateString("en-PK",{day:"numeric",month:"short",year:"numeric"})}`:"Record this wallet’s starting balance"}</small></div><ChevronRight/></button>
+        <button onClick={()=>setClosingOpen(true)}><span><ClipboardCheck/></span><div><strong>{selectedWallet.name} closing summary</strong><small>Count and tally today’s wallet balance</small></div><ChevronRight/></button>
       </div>
       <div className="settings-group"><small>BACKUP & SYNC</small>
         <div className="setting-status"><span><Cloud/></span><div><strong>Cloud backup</strong><small>{cloudState==="saved"?"Private cloud copy is up to date":cloudState==="saving"?"Saving private cloud copy…":cloudState==="unavailable"?"Setup required · entries remain on this device":"Saved securely online"}</small></div><i className={cloudState==="saved"?"on":""}/></div>
@@ -398,20 +462,22 @@ export default function CashApp(){
 
     <nav className="bottom-nav"><button className={tab==="home"?"active":""} onClick={()=>setTab("home")}><Home/><span>Home</span></button><button className={tab==="history"?"active":""} onClick={()=>setTab("history")}><History/><span>History</span></button><button className={tab==="insights"?"active":""} onClick={()=>setTab("insights")}><BarChart3/><span>Insights</span></button><button className={tab==="settings"?"active":""} onClick={()=>setTab("settings")}><Settings2/><span>Settings</span></button></nav>
 
-    {entryMode&&<div className="sheet-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)closeEntry()}}><section className="entry-sheet" role="dialog" aria-modal="true"><div className="sheet-handle"/><button className="sheet-close" onClick={closeEntry} aria-label="Close"><X/></button>{entryMode==="voice"&&<><div className={`voice-orb ${listening?"listening":""}`}><Mic/></div><h2>{listening?"Listening…":"Voice entry"}</h2><p className="sheet-sub">Boliye: “500 rupay Imran se liye”</p>{input&&<div className="heard-text">“{input}”</div>} {!listening&&!candidate&&<button className="primary-button" onClick={startVoice}><Mic/> Tap to speak again</button>}</>}{entryMode==="chat"&&<><span className="sheet-icon chat"><MessageCircleMore/></span><h2>Type your transaction</h2><p className="sheet-sub">Roman Urdu or English — dono chalega</p><div className="chat-entry"><input ref={chatRef} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&void interpretText(input)} placeholder="e.g. 2,000 chaye wale ko diye"/><button onClick={()=>void interpretText(input)} disabled={parsing}><Send/></button></div></>}{entryMode==="manual"&&<><span className="sheet-icon manual"><PenLine/></span><h2>Manual entry</h2><form className="manual-form" onSubmit={submitManual}><label>Amount ({currencyPrefix(profile.currency)})<input ref={manualRef} type="number" inputMode="decimal" value={manual.amount} onChange={e=>setManual({...manual,amount:e.target.value})} placeholder="0"/></label><label>Description<input value={manual.description} onChange={e=>setManual({...manual,description:e.target.value})} placeholder="What was this for?"/></label><div className="direction-toggle"><button type="button" className={manual.direction==="IN"?"selected in":""} onClick={()=>setManual({...manual,direction:"IN"})}><ArrowDownLeft/> Money in</button><button type="button" className={manual.direction==="OUT"?"selected out":""} onClick={()=>setManual({...manual,direction:"OUT"})}><ArrowUpRight/> Money out</button></div><button className="primary-button" type="submit">Save transaction</button></form></>}{parsing&&<p className="parsing"><Sparkles/> Understanding your transaction…</p>}{candidate&&<Confirm candidate={candidate} setCandidate={setCandidate} cancel={closeEntry} currency={profile.currency} save={()=>void addTransaction(candidate,entryMode==="voice"?"Voice":"Chat")}/>}</section></div>}
+    {entryMode&&<div className="sheet-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)closeEntry()}}><section className="entry-sheet" role="dialog" aria-modal="true"><div className="sheet-handle"/><button className="sheet-close" onClick={closeEntry} aria-label="Close"><X/></button><div className="entry-wallet-pill">{selectedWallet.type==="bank"?<Landmark/>:<WalletCards/>} {walletLabel(selectedWallet)}</div>{entryMode==="voice"&&<><div className={`voice-orb ${listening?"listening":""}`}><Mic/></div><h2>{listening?"Listening…":"Voice entry"}</h2><p className="sheet-sub">Boliye: “500 rupay Imran se liye”</p>{input&&<div className="heard-text">“{input}”</div>} {!listening&&!candidate&&<button className="primary-button" onClick={startVoice}><Mic/> Tap to speak again</button>}</>}{entryMode==="chat"&&<><span className="sheet-icon chat"><MessageCircleMore/></span><h2>Type your transaction</h2><p className="sheet-sub">Roman Urdu or English — dono chalega</p><div className="chat-entry"><input ref={chatRef} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&void interpretText(input)} placeholder="e.g. 2,000 chaye wale ko diye"/><button onClick={()=>void interpretText(input)} disabled={parsing}><Send/></button></div></>}{entryMode==="manual"&&<><span className="sheet-icon manual"><PenLine/></span><h2>Manual entry</h2><form className="manual-form" onSubmit={submitManual}><label>Amount ({currencyPrefix(profile.currency)})<input ref={manualRef} type="number" inputMode="decimal" value={manual.amount} onChange={e=>setManual({...manual,amount:e.target.value})} placeholder="0"/></label><label>Description<input value={manual.description} onChange={e=>setManual({...manual,description:e.target.value})} placeholder="What was this for?"/></label><div className="direction-toggle"><button type="button" className={manual.direction==="IN"?"selected in":""} onClick={()=>setManual({...manual,direction:"IN"})}><ArrowDownLeft/> Money in</button><button type="button" className={manual.direction==="OUT"?"selected out":""} onClick={()=>setManual({...manual,direction:"OUT"})}><ArrowUpRight/> Money out</button></div><button className="primary-button" type="submit">Save transaction</button></form></>}{parsing&&<p className="parsing"><Sparkles/> Understanding your transaction…</p>}{candidate&&<Confirm candidate={candidate} setCandidate={setCandidate} cancel={closeEntry} currency={profile.currency} save={()=>void addTransaction(candidate,entryMode==="voice"?"Voice":"Chat")}/>}</section></div>}
 
-    {openingOpen&&<Modal close={()=>setOpeningOpen(false)} title={openingEntry?"Edit opening balance":"Add opening balance"} subtitle={openingEntryCount>1?"Multiple old opening entries were found. Saving will replace them with this single corrected balance.":"Set the balance and date you started this cashbook with."}><form onSubmit={saveOpening} className="single-form"><label>Opening balance ({currencyPrefix(profile.currency)})<input autoFocus type="number" min="0.01" step="0.01" inputMode="decimal" value={openingAmount} onChange={e=>setOpeningAmount(e.target.value)} placeholder="0"/></label><label>Opening balance date<input type="date" max={todayKey()} value={openingDate} onChange={e=>setOpeningDate(e.target.value)} required/></label><p><Info/> The opening balance can be saved once and edited later.</p><button className="primary-button">{openingEntry?"Save opening balance changes":"Save opening balance"}</button></form></Modal>}
-    {closingOpen&&<Modal close={()=>setClosingOpen(false)} title={profile.walletType==="bank"?"Close today’s account":"Close today’s cash"} subtitle={profile.walletType==="bank"?"Enter the bank balance, then compare it with Hisaab.":"Count the physical cash you have, then compare it with Hisaab."}><div className="closing-totals"><span>Opening / current balance<strong>{formatMoney(totals.balance)}</strong></span><span>Today’s entries<strong>{totals.todays.length}</strong></span></div><form onSubmit={saveClosing} className="single-form"><label>{profile.walletType==="bank"?"Bank balance":"Cash counted"} ({currencyPrefix(profile.currency)})<input autoFocus type="number" inputMode="decimal" value={countedCash} onChange={e=>setCountedCash(e.target.value)} placeholder={profile.walletType==="bank"?"Enter bank balance":"Enter physical cash"}/></label>{countedCash!==""&&<div className={`difference-preview ${Number(countedCash)-totals.balance===0?"match":""}`}><span>{Number(countedCash)-totals.balance===0?<Check/>:<Info/>}</span><div><small>DIFFERENCE</small><strong>{formatSigned(Number(countedCash)-totals.balance)}</strong></div></div>}<label>Note (optional)<input value={closingNote} onChange={e=>setClosingNote(e.target.value)} placeholder="Reason for any difference"/></label><button className="primary-button">Save closing summary</button></form></Modal>}
-    {editTarget&&<Modal close={()=>setEditTarget(null)} title="Edit transaction" subtitle="Update this past entry. Your balance and Google Sheet will be recalculated."><form onSubmit={saveEdit} className="manual-form"><label>Amount ({currencyPrefix(profile.currency)})<input autoFocus type="number" min="0.01" step="0.01" inputMode="decimal" value={editDraft.amount} onChange={e=>setEditDraft({...editDraft,amount:e.target.value})}/></label><label>Description<input value={editDraft.description} onChange={e=>setEditDraft({...editDraft,description:e.target.value})}/></label><label>Date<input type="date" value={editDraft.date} onChange={e=>setEditDraft({...editDraft,date:e.target.value})}/></label><div className="direction-toggle"><button type="button" className={editDraft.direction==="IN"?"selected in":""} onClick={()=>setEditDraft({...editDraft,direction:"IN"})}><ArrowDownLeft/> Money in</button><button type="button" className={editDraft.direction==="OUT"?"selected out":""} onClick={()=>setEditDraft({...editDraft,direction:"OUT"})}><ArrowUpRight/> Money out</button></div><button className="primary-button">Save changes</button></form></Modal>}
-    {deleteTarget&&<Modal close={()=>setDeleteTarget(null)} title="Delete transaction?" subtitle={`${formatMoney(deleteTarget.amount)} · ${deleteTarget.description}`}><div className="delete-confirm"><p>This removes the entry from the app, private backup, and connected Google Sheet.</p><button className="danger-button" onClick={()=>void confirmDelete()}><Trash2/> Delete transaction</button><button className="secondary-button" onClick={()=>setDeleteTarget(null)}>Keep entry</button></div></Modal>}
-    {profileOpen&&<Modal close={()=>setProfileOpen(false)} title="Currency & wallet" subtitle="These details control amount labels, closing language, and your Google Sheet headings."><form className="manual-form" onSubmit={saveProfileSettings}><label>Currency<select value={profileDraft.currency} onChange={e=>setProfileDraft({...profileDraft,currency:e.target.value as CashbookProfile["currency"]})}>{CURRENCY_OPTIONS.map(option=><option value={option.code} key={option.code}>{option.code} · {option.label}</option>)}</select></label><div className="direction-toggle"><button type="button" className={profileDraft.walletType==="cash"?"selected in":""} onClick={()=>setProfileDraft({...profileDraft,walletType:"cash",bankName:"",walletName:profileDraft.walletName||"Cash"})}><WalletCards/> Cash</button><button type="button" className={profileDraft.walletType==="bank"?"selected in":""} onClick={()=>setProfileDraft({...profileDraft,walletType:"bank",walletName:profileDraft.walletName==="Cash"?"Main account":profileDraft.walletName})}><Landmark/> Bank</button></div>{profileDraft.walletType==="bank"&&<label>Bank name<input value={profileDraft.bankName} onChange={e=>setProfileDraft({...profileDraft,bankName:e.target.value})} placeholder="e.g. Meezan Bank" required/></label>}<label>{profileDraft.walletType==="bank"?"Account name":"Wallet name"}<input value={profileDraft.walletName} onChange={e=>setProfileDraft({...profileDraft,walletName:e.target.value})} placeholder={profileDraft.walletType==="bank"?"e.g. Business account":"e.g. Cash"} required/></label><button className="primary-button">Save settings</button></form></Modal>}
+    {openingOpen&&<Modal close={()=>setOpeningOpen(false)} title={openingEntry?`Edit ${selectedWallet.name} opening balance`:`Add ${selectedWallet.name} opening balance`} subtitle={openingEntryCount>1?"Multiple old opening entries were found. Saving will replace them with this single corrected balance.":"Set the balance and date you started this wallet with."}><form onSubmit={saveOpening} className="single-form"><label>Opening balance ({currencyPrefix(profile.currency)})<input autoFocus type="number" min="0.01" step="0.01" inputMode="decimal" value={openingAmount} onChange={e=>setOpeningAmount(e.target.value)} placeholder="0"/></label><label>Opening balance date<input type="date" max={todayKey()} value={openingDate} onChange={e=>setOpeningDate(e.target.value)} required/></label><p><Info/> Each wallet has its own opening balance.</p><button className="primary-button">{openingEntry?"Save opening balance changes":"Save opening balance"}</button></form></Modal>}
+    {closingOpen&&<Modal close={()=>setClosingOpen(false)} title={selectedWallet.type==="bank"?`Close ${selectedWallet.name} account`:`Close ${selectedWallet.name}`} subtitle={selectedWallet.type==="bank"?"Enter the bank balance, then compare it with Hisaab.":"Count the physical cash you have, then compare it with Hisaab."}><div className="closing-totals"><span>Current balance<strong>{formatMoney(totals.balance)}</strong></span><span>Today’s entries<strong>{totals.todays.length}</strong></span></div><form onSubmit={saveClosing} className="single-form"><label>{selectedWallet.type==="bank"?"Bank balance":"Cash counted"} ({currencyPrefix(profile.currency)})<input autoFocus type="number" inputMode="decimal" value={countedCash} onChange={e=>setCountedCash(e.target.value)} placeholder={selectedWallet.type==="bank"?"Enter bank balance":"Enter physical cash"}/></label>{countedCash!==""&&<div className={`difference-preview ${Number(countedCash)-totals.balance===0?"match":""}`}><span>{Number(countedCash)-totals.balance===0?<Check/>:<Info/>}</span><div><small>DIFFERENCE</small><strong>{formatSigned(Number(countedCash)-totals.balance)}</strong></div></div>}<label>Note (optional)<input value={closingNote} onChange={e=>setClosingNote(e.target.value)} placeholder="Reason for any difference"/></label><button className="primary-button">Save closing summary</button></form></Modal>}
+    {editTarget&&<Modal close={()=>setEditTarget(null)} title="Edit transaction" subtitle="Update this past entry. Wallet balances and Google Sheets will be recalculated."><form onSubmit={saveEdit} className="manual-form"><label>Wallet<select value={editDraft.walletId} onChange={e=>setEditDraft({...editDraft,walletId:e.target.value})}>{availableWallets.map(wallet=><option value={wallet.id} key={wallet.id}>{walletLabel(wallet)}</option>)}</select></label><label>Amount ({currencyPrefix(profile.currency)})<input autoFocus type="number" min="0.01" step="0.01" inputMode="decimal" value={editDraft.amount} onChange={e=>setEditDraft({...editDraft,amount:e.target.value})}/></label><label>Description<input value={editDraft.description} onChange={e=>setEditDraft({...editDraft,description:e.target.value})}/></label><label>Date<input type="date" value={editDraft.date} onChange={e=>setEditDraft({...editDraft,date:e.target.value})}/></label><div className="direction-toggle"><button type="button" className={editDraft.direction==="IN"?"selected in":""} onClick={()=>setEditDraft({...editDraft,direction:"IN"})}><ArrowDownLeft/> Money in</button><button type="button" className={editDraft.direction==="OUT"?"selected out":""} onClick={()=>setEditDraft({...editDraft,direction:"OUT"})}><ArrowUpRight/> Money out</button></div><button className="primary-button">Save changes</button></form></Modal>}
+    {deleteTarget&&<Modal close={()=>setDeleteTarget(null)} title={deleteTarget.transferId?"Delete transfer?":"Delete transaction?"} subtitle={`${formatMoney(deleteTarget.amount)} · ${deleteTarget.description}`}><div className="delete-confirm"><p>{deleteTarget.transferId?"Both sides of this wallet transfer will be removed.":"This removes the entry from the app, private backup, and connected Google Sheet."}</p><button className="danger-button" onClick={()=>void confirmDelete()}><Trash2/> {deleteTarget.transferId?"Delete transfer":"Delete transaction"}</button><button className="secondary-button" onClick={()=>setDeleteTarget(null)}>Keep entry</button></div></Modal>}
+    {profileOpen&&<Modal close={()=>setProfileOpen(false)} title="Currency" subtitle="This controls amount labels throughout the cashbook and Google Sheet."><form className="manual-form" onSubmit={saveProfileSettings}><label>Currency<select value={profileDraft.currency} onChange={e=>setProfileDraft({...profileDraft,currency:e.target.value as CashbookProfile["currency"]})}>{CURRENCY_OPTIONS.map(option=><option value={option.code} key={option.code}>{option.code} · {option.label}</option>)}</select></label><button className="primary-button">Save currency</button></form></Modal>}
+    {walletOpen&&<Modal close={()=>setWalletOpen(false)} title={walletDraft.id?"Edit wallet":"Add wallet"} subtitle="Keep cash, bank accounts, and other balances separate."><form className="manual-form" onSubmit={saveWallet}><div className="direction-toggle"><button type="button" className={walletDraft.type==="cash"?"selected in":""} onClick={()=>setWalletDraft({...walletDraft,type:"cash",bankName:""})}><WalletCards/> Cash</button><button type="button" className={walletDraft.type==="bank"?"selected in":""} onClick={()=>setWalletDraft({...walletDraft,type:"bank"})}><Landmark/> Bank</button></div>{walletDraft.type==="bank"&&<label>Bank name<input value={walletDraft.bankName} onChange={e=>setWalletDraft({...walletDraft,bankName:e.target.value})} placeholder="e.g. Meezan Bank" required/></label>}<label>{walletDraft.type==="bank"?"Account name":"Wallet name"}<input autoFocus value={walletDraft.name} onChange={e=>setWalletDraft({...walletDraft,name:e.target.value})} placeholder={walletDraft.type==="bank"?"e.g. Business account":"e.g. Cash drawer"} required/></label><button className="primary-button">{walletDraft.id?"Save wallet":"Add wallet"}</button>{walletDraft.id&&<button className="archive-button" type="button" onClick={()=>{archiveWallet(walletDraft);setWalletOpen(false)}}><Archive/> Archive wallet</button>}</form></Modal>}
+    {transferOpen&&<Modal close={()=>setTransferOpen(false)} title="Transfer between wallets" subtitle="This moves money internally, so your total balance stays the same."><form className="manual-form" onSubmit={saveTransfer}><label>From wallet<select value={transferDraft.fromWalletId} onChange={e=>setTransferDraft({...transferDraft,fromWalletId:e.target.value,toWalletId:e.target.value===transferDraft.toWalletId?availableWallets.find(w=>w.id!==e.target.value)?.id||"":transferDraft.toWalletId})}>{availableWallets.map(wallet=><option value={wallet.id} key={wallet.id}>{walletLabel(wallet)} · {formatMoney(walletBalance(transactions,wallet.id))}</option>)}</select></label><div className="transfer-arrow"><ArrowDownLeft/></div><label>To wallet<select value={transferDraft.toWalletId} onChange={e=>setTransferDraft({...transferDraft,toWalletId:e.target.value})}>{availableWallets.filter(wallet=>wallet.id!==transferDraft.fromWalletId).map(wallet=><option value={wallet.id} key={wallet.id}>{walletLabel(wallet)}</option>)}</select></label><label>Amount ({currencyPrefix(profile.currency)})<input autoFocus type="number" min="0.01" step="0.01" inputMode="decimal" value={transferDraft.amount} onChange={e=>setTransferDraft({...transferDraft,amount:e.target.value})} placeholder="0"/></label><label>Note (optional)<input value={transferDraft.note} onChange={e=>setTransferDraft({...transferDraft,note:e.target.value})} placeholder="e.g. Cash deposited in bank"/></label><button className="primary-button"><ArrowRightLeft/> Transfer money</button></form></Modal>}
     {sheetConflict&&<Modal close={()=>setSheetConflict(null)} title="Google Sheet changes found" subtitle="Nothing has been overwritten. Choose which version should become your cashbook."><div className="conflict-summary"><span><b>{sheetConflict.added}</b> added in Sheet</span><span><b>{sheetConflict.changed}</b> changed in Sheet</span><span><b>{sheetConflict.removed}</b> removed in Sheet</span></div><div className="delete-confirm"><button className="primary-button" onClick={importSheetChanges}><FileSpreadsheet/> Keep Google Sheet changes</button><button className="secondary-button" onClick={()=>void restoreSheetFromApp()}><RefreshCw/> Restore Sheet from app</button><p><ShieldCheck/> The running balance and negative-balance rules are validated before Sheet changes can be imported.</p></div></Modal>}
     {onboardingStep>0&&<Onboarding step={onboardingStep} profile={profileDraft} setProfile={setProfileDraft} next={advanceOnboarding} back={()=>setOnboardingStep(step=>Math.max(1,step-1))} skip={completeOnboarding} connect={()=>void connectFromOnboarding()}/>} 
     {toast&&<div className="toast" role="status"><Check/>{toast}</div>}
   </main>
 }
 
-function TransactionRow({t,currency,showDate=false,actions=false,onEdit,onDelete}:{t:Transaction;currency:CashbookProfile["currency"];showDate?:boolean;actions?:boolean;onEdit?:()=>void;onDelete?:()=>void}){return <article className={`transaction-row ${actions?"with-actions":""}`}><span className={t.direction==="IN"?"in":"out"}>{t.direction==="IN"?<ArrowDownLeft/>:<ArrowUpRight/>}</span><div><strong>{t.description}</strong><small>{showDate?`${new Date(`${t.date}T12:00:00`).toLocaleDateString("en-PK",{day:"numeric",month:"short"})} · `:""}{t.time} · {t.source}</small></div><b className={t.direction==="IN"?"in":"out"}>{t.direction==="IN"?"+":"−"}{money(t.amount,currency)}</b>{actions&&<div className="row-actions"><button onClick={onEdit} aria-label={`Edit ${t.description}`}><PenLine/></button>{onDelete&&<button className="delete" onClick={onDelete} aria-label={`Delete ${t.description}`}><Trash2/></button>}</div>}</article>}
+function TransactionRow({t,currency,walletName,showDate=false,actions=false,onEdit,onDelete}:{t:Transaction;currency:CashbookProfile["currency"];walletName?:string;showDate?:boolean;actions?:boolean;onEdit?:()=>void;onDelete?:()=>void}){return <article className={`transaction-row ${actions?"with-actions":""}`}><span className={t.direction==="IN"?"in":"out"}>{t.source==="Transfer"?<ArrowRightLeft/>:t.direction==="IN"?<ArrowDownLeft/>:<ArrowUpRight/>}</span><div><strong>{t.description}</strong><small>{showDate?`${new Date(`${t.date}T12:00:00`).toLocaleDateString("en-PK",{day:"numeric",month:"short"})} · `:""}{walletName?`${walletName} · `:""}{t.time} · {t.source}</small></div><b className={t.direction==="IN"?"in":"out"}>{t.direction==="IN"?"+":"−"}{money(t.amount,currency)}</b>{actions&&<div className="row-actions"><button onClick={onEdit} aria-label={`Edit ${t.description}`}><PenLine/></button>{onDelete&&<button className="delete" onClick={onDelete} aria-label={`Delete ${t.description}`}><Trash2/></button>}</div>}</article>}
 function Empty({icon,title,text}:{icon:React.ReactNode;title:string;text:string}){return <div className="empty-state"><span>{icon}</span><h3>{title}</h3><p>{text}</p></div>}
 function Modal({close,title,subtitle,children}:{close:()=>void;title:string;subtitle:string;children:React.ReactNode}){return <div className="sheet-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)close()}}><section className="entry-sheet modal-sheet" role="dialog" aria-modal="true"><div className="sheet-handle"/><button className="sheet-close" onClick={close} aria-label="Close"><X/></button><h2>{title}</h2><p className="sheet-sub">{subtitle}</p>{children}</section></div>}
 function Confirm({candidate,setCandidate,save,cancel,currency}:{candidate:ReturnType<typeof parseNatural>;setCandidate:(v:ReturnType<typeof parseNatural>|null)=>void;save:()=>void;cancel:()=>void;currency:CashbookProfile["currency"]}){

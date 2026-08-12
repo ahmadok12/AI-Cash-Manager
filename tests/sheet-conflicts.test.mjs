@@ -18,3 +18,12 @@ test("invalid sheet edits that create negative balance are rejected",()=>{
 test("money in and money out cannot both be filled",()=>{
   assert.throws(()=>parseSheetRows([[2,"2026-08-10","10:00 AM","Spent",500,500,0,"Invalid","Manual","Hisaab AI"]]),/either Money In or Money Out/);
 });
+
+test("modern sheet rows restore the matching wallet",()=>{
+  const sheet=parseSheetRows([[2,"2026-08-10","10:00 AM","Meezan · Main","Received",500,"",500,"Sale","Manual","Hisaab AI"]],{"meezan · main":"bank-main"});
+  assert.equal(sheet[0].walletId,"bank-main");
+});
+
+test("unknown Sheet wallets are rejected instead of creating orphan entries",()=>{
+  assert.throws(()=>parseSheetRows([[2,"2026-08-10","10:00 AM","Unknown","Received",500,"",500,"Sale","Manual","Hisaab AI"]],{"cash":"wallet-cash"}),/does not match/);
+});

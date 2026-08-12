@@ -5,7 +5,7 @@
 The Transactions sheet keeps money received and money paid in separate columns and recalculates the running balance whenever transactions are added, edited, deleted, or re-synced.
 
 ```text
-ID | Date | Time | Type | Money In (PKR) | Money Out (PKR) | Running Balance (PKR) | Description | Entry method | Parser
+ID | Date | Time | Wallet | Type | Money In (PKR) | Money Out (PKR) | Wallet Balance (PKR) | Description | Entry method | Parser
 ```
 
 Mobile-first cashbook for Roman Urdu and English transaction entry. The frontend is deployed on GitHub Pages, Gemini runs inside a JWT-protected Supabase Edge Function, and every tester stores transactions in a Google Sheet owned by their own Google account.
@@ -14,8 +14,10 @@ Mobile-first cashbook for Roman Urdu and English transaction entry. The frontend
 
 - Voice, chat, and manual transaction entry
 - Focused mobile-only dashboard with three direct one-tap entry shortcuts
-- One opening balance per cashbook, with an editable amount and date
-- Daily closing summary with expected cash, counted cash, difference, and notes
+- Multiple cash and bank wallets with independent balances
+- One editable opening balance per wallet
+- Wallet-to-wallet transfers that do not change total cashbook balance
+- Daily closing summary per wallet with expected balance, counted balance, difference, and notes
 - Separate History, Insights, and Settings tabs
 - Roman Urdu rules for `liye`, `diye`, `jama karwaye`, and `nikalwaye`
 - Deterministic Roman Urdu/English compound-number parsing shared by the app and Edge Function
@@ -24,9 +26,10 @@ Mobile-first cashbook for Roman Urdu and English transaction entry. The frontend
 - Per-user Google Sheet creation and synchronization
 - Automatic sheet creation after Google authorization
 - Edit and delete past entries with Google Sheets synchronization
-- Balance protection that blocks money-out above the available balance
+- Per-wallet balance protection that blocks money-out above the available balance
 - Local device persistence, search, and confirmation
-- Three-step first-run onboarding for currency, cash/bank wallet details, and optional Google Sheets connection
+- Three-step first-run onboarding for currency, the first wallet, and optional Google Sheets connection
+- Automatic migration of existing v2.3 entries into the user’s original wallet
 - Editable voice/chat confirmation before saving
 - Configurable currency with English-only labels (`Rs.` for PKR; never `₹`)
 - Google Sheet change detection with explicit import or restore choices

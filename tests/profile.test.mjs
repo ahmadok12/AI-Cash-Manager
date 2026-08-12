@@ -13,6 +13,6 @@ test("a bank wallet requires a bank name and account name", () => {
 
 test("old users migrate safely to PKR cash", () => {
   assert.deepEqual(normalizeProfile({onboardingComplete:true}),{
-    currency:"PKR",walletType:"cash",walletName:"Cash",bankName:"",onboardingComplete:true,
+    currency:"PKR",wallets:[{id:"wallet-cash",type:"cash",name:"Cash",bankName:""}],activeWalletId:"wallet-cash",walletType:"cash",walletName:"Cash",bankName:"",onboardingComplete:true,
   });
 });

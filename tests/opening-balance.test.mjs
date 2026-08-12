@@ -19,3 +19,13 @@ test("opening balance is unique after save", () => {
 test("the most recently created legacy opening entry is shown for correction", () => {
   assert.equal(currentOpeningBalance([entry(10, 1000), entry(20, 2500)])?.amount, 2500);
 });
+
+test("each wallet keeps its own opening balance", () => {
+  const cash = {...entry(1,1000),walletId:"cash"};
+  const bank = {...entry(2,5000),walletId:"bank"};
+  assert.equal(currentOpeningBalance([cash,bank],"cash")?.amount,1000);
+  assert.equal(currentOpeningBalance([cash,bank],"bank")?.amount,5000);
+  const replaced = replaceOpeningBalance([cash,bank],{...cash,amount:1500},"cash");
+  assert.equal(currentOpeningBalance(replaced,"cash")?.amount,1500);
+  assert.equal(currentOpeningBalance(replaced,"bank")?.amount,5000);
+});

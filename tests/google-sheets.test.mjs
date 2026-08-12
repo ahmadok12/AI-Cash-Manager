@@ -28,7 +28,7 @@ test("cashbook creation payload uses valid Google Sheets properties", () => {
 
 test("transaction sheet has separate money columns and a running balance", () => {
   assert.deepEqual(transactionHeaders, [
-    "ID", "Date", "Time", "Type", "Money In (PKR)", "Money Out (PKR)",
+    "ID", "Date", "Time", "Wallet", "Type", "Money In (PKR)", "Money Out (PKR)",
     "Running Balance (PKR)", "Description", "Entry method", "Parser",
   ]);
 
@@ -38,7 +38,7 @@ test("transaction sheet has separate money columns and a running balance", () =>
     { id: 1, date: "2026-08-11", time: "5:09 PM", action: "Opening balance", amount: 10000, direction: "IN", description: "Opening balance", source: "Opening" },
   ]);
 
-  assert.deepEqual(rows.map((row) => row.slice(4, 7)), [
+  assert.deepEqual(rows.map((row) => row.slice(5, 8)), [
     [10000, "", 10000],
     ["", 2000, 8000],
     [500, "", 8500],
@@ -50,7 +50,7 @@ test("running balance follows transaction date and then creation order", () => {
     { id: 10, date: "2026-08-12", time: "9:00 AM", action: "Spent", amount: 300, direction: "OUT", description: "Later", source: "Manual" },
     { id: 20, date: "2026-08-11", time: "9:00 AM", action: "Received", amount: 1000, direction: "IN", description: "Earlier", source: "Manual" },
   ]);
-  assert.deepEqual(rows.map((row) => [row[1], row[6]]), [
+  assert.deepEqual(rows.map((row) => [row[1], row[7]]), [
     ["2026-08-11", 1000],
     ["2026-08-12", 700],
   ]);
@@ -61,7 +61,16 @@ test("opening balance is first when it shares a date with transactions", () => {
     { id: 1, date: "2026-08-11", time: "8:00 AM", action: "Spent", amount: 200, direction: "OUT", description: "Tea", source: "Manual" },
     { id: 2, date: "2026-08-11", time: "9:00 AM", action: "Opening balance", amount: 1000, direction: "IN", description: "Opening balance", source: "Opening" },
   ]);
-  assert.equal(rows[0][3], "Opening balance");
-  assert.equal(rows[0][6], 1000);
-  assert.equal(rows[1][6], 800);
+  assert.equal(rows[0][4], "Opening balance");
+  assert.equal(rows[0][7], 1000);
+  assert.equal(rows[1][7], 800);
+});
+
+test("running balances are calculated separately for each wallet", () => {
+  const rows = transactionRows([
+    { id: 1, walletId: "cash", walletName: "Cash", date: "2026-08-11", time: "9:00 AM", action: "Opening balance", amount: 1000, direction: "IN", description: "Opening balance", source: "Opening" },
+    { id: 2, walletId: "bank", walletName: "Meezan", date: "2026-08-11", time: "9:01 AM", action: "Opening balance", amount: 5000, direction: "IN", description: "Opening balance", source: "Opening" },
+    { id: 3, walletId: "cash", walletName: "Cash", date: "2026-08-11", time: "9:02 AM", action: "Spent", amount: 200, direction: "OUT", description: "Tea", source: "Manual" },
+  ]);
+  assert.deepEqual(rows.map((row) => [row[3], row[7]]), [["Cash",1000],["Meezan",5000],["Cash",800]]);
 });

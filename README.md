@@ -83,8 +83,10 @@ The browser must ask for microphone permission on the first voice entry. A home-
 
 - `500 rs Imran se liye` → Money in
 - `2000 rs diye chaye wale ko` → Money out
-- `50000 Meezan Bank main jama karwaye` → Money out / Deposited
-- `20000 Meezan Bank se nikalwaye` → Money in / Withdrawn
+- `50000 Meezan Bank main jama karwaye` → Cash Wallet to Meezan Bank transfer (when both wallets exist)
+- `20000 Meezan Bank se nikalwaye` → Meezan Bank to Cash Wallet transfer (when both wallets exist)
+- `500 chaye wale ko diye` → Money out, then choose the wallet before saving
+- `500 Meezan Bank se bill pay kiya` → Money out from the matching Meezan Bank wallet
 - `1000 Ali` → Ask the user to confirm the direction
 - `2 hazar 5 so 60 diye` → Rs. 2,560 money out
 - `do hazaar paanch sau saath diye` → Rs. 2,560 money out

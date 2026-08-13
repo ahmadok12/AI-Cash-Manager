@@ -17,12 +17,14 @@ Mobile-first cashbook for Roman Urdu and English transaction entry. The frontend
 - Multiple cash and bank wallets with independent balances
 - One editable opening balance per wallet
 - Wallet-to-wallet transfers that do not change total cashbook balance
-- Savings goals for future assets, shopping, tours, and other plans; savings are earmarked without being treated as expenses
-- Separate cash in/out ledgers for family members or other people
-- Open people ledgers for ongoing lending and receipts
+- Separate Savings and Khaata buttons for quick access
+- Savings goals for future assets, shopping, tours, and other plans; every saving or withdrawal uses a selected wallet and updates its balance
+- Open Khaatas for ongoing lending and receipts
 - Target receivables with optional monthly installment schedules and overdue/partial/paid states
 - Lending and installment receipts linked to the selected wallet so both cash and receivables stay correct
-- Downloadable A4 person-ledger PDFs with activity, balance, and installment schedule
+- Editable savings goals, initial Khaata receivables, and every Savings/Khaata cash entry
+- Date-filtered A4 Khaata PDFs with activity, brought-forward balance, and installment schedule
+- Date-filtered cash in/out reports in PDF and CSV
 - Mobile file sharing to WhatsApp, with PDF download plus prepared WhatsApp message as the desktop fallback
 - Daily closing summary per wallet with expected balance, counted balance, difference, and notes
 - Separate History, Insights, and Settings tabs

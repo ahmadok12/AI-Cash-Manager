@@ -15,6 +15,8 @@ export type SavingsEntry = {
   direction: "ADD" | "WITHDRAW";
   date: string;
   note?: string;
+  walletId?: string;
+  transactionId?: number;
 };
 
 export type PersonLedger = {
@@ -46,6 +48,10 @@ export function goalSaved(entries: SavingsEntry[], goalId: string) {
   return entries
     .filter((entry) => entry.goalId === goalId)
     .reduce((sum, entry) => sum + (entry.direction === "ADD" ? entry.amount : -entry.amount), 0);
+}
+
+export function savingsWalletDirection(direction: SavingsEntry["direction"]): "IN" | "OUT" {
+  return direction === "ADD" ? "OUT" : "IN";
 }
 
 export function goalProgress(goal: SavingsGoal, entries: SavingsEntry[]) {

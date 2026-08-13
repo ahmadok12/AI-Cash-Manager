@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { goalProgress, goalSaved, installmentSchedule, ledgerOutstanding, ledgerPrincipal, ledgerReceived } from "../src/planning.ts";
+import { goalProgress, goalSaved, installmentSchedule, ledgerOutstanding, ledgerPrincipal, ledgerReceived, savingsWalletDirection } from "../src/planning.ts";
 
 const ledger = {
   id: "person-1",
@@ -12,13 +12,15 @@ const ledger = {
   createdAt: "2026-08-13T00:00:00Z",
 };
 
-test("savings additions and withdrawals do not inflate the reserved balance", () => {
+test("savings additions and withdrawals calculate the saved amount", () => {
   const entries = [
     { id: "1", goalId: "tour", amount: 25000, direction: "ADD", date: "2026-08-01" },
     { id: "2", goalId: "tour", amount: 5000, direction: "WITHDRAW", date: "2026-08-02" },
   ];
   assert.equal(goalSaved(entries, "tour"), 20000);
   assert.equal(goalProgress({ id: "tour", name: "Tour", targetAmount: 100000, createdAt: "" }, entries), 20);
+  assert.equal(savingsWalletDirection("ADD"), "OUT");
+  assert.equal(savingsWalletDirection("WITHDRAW"), "IN");
 });
 
 test("person ledger combines opening target, new lending, and receipts", () => {

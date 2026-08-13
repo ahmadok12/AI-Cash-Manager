@@ -53,7 +53,7 @@ The publishable key is designed for browser use. Never put a Supabase secret/ser
 
    `supabase/setup-cashbook-backup.sql`
 
-Run this SQL again when upgrading from v2.4 or earlier. It safely adds the new `planning` backup field used by Savings Goals and People Ledgers without deleting existing transactions.
+Run this SQL again when upgrading from v2.4 or earlier. It safely adds the `planning` backup field used by Savings and Khaata without deleting existing transactions.
 
 The table has Row Level Security enabled. Every operation checks that `auth.uid()` matches the row's `user_id`.
 
@@ -109,9 +109,11 @@ Each tester should:
 8. Complete **Close today's cash** and check that expected cash, counted cash, and any difference are clear.
 9. Press the Google Sheets button to open the tester's sheet and confirm the transaction rows.
 10. Edit one description in Google Sheets, return to **Settings → Check Google Sheet changes**, and confirm that Hisaab asks whether to import or restore rather than overwriting automatically.
-11. Open **Plans**, create a savings goal, and add a reserved amount. Confirm the wallet balance does not change.
-12. Create a target receivable for a person with a monthly installment, receive one payment into a wallet, and confirm both the wallet and outstanding receivable update.
-13. Open the person ledger, save its PDF, and test **Share on WhatsApp** on a phone.
+11. Open **Savings**, create a goal, choose a wallet, and save an amount. Confirm the wallet balance decreases; withdraw it and confirm the balance increases.
+12. Edit the goal and a savings entry, then confirm the goal, wallet, and History all update without duplicate transactions.
+13. Open **Khaata**, create a target receivable with a monthly installment, receive one payment into a wallet, and confirm both the wallet and outstanding receivable update.
+14. Edit the initial receivable and a Khaata entry, then confirm the wallet and outstanding amount remain consistent.
+15. Apply a date filter and save/share the Khaata PDF. In **History & reports**, export date-filtered cash in/out PDF and CSV reports.
 
 ## 8. Troubleshooting
 

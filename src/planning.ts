@@ -74,10 +74,19 @@ export function ledgerReceived(entries: PersonLedgerEntry[], ledgerId: string) {
     .reduce((sum, entry) => sum + entry.amount, 0);
 }
 
-export function ledgerPrincipal(ledger: PersonLedger, entries: PersonLedgerEntry[]) {
-  return ledger.openingReceivable + entries
-    .filter((entry) => entry.ledgerId === ledger.id && entry.kind !== "RECEIVED")
+export function ledgerGiven(entries: PersonLedgerEntry[], ledgerId: string) {
+  return entries
+    .filter((entry) => entry.ledgerId === ledgerId && entry.kind !== "RECEIVED")
     .reduce((sum, entry) => sum + entry.amount, 0);
+}
+
+export function ledgerBalanceSide(balance: number) {
+  return balance < 0 ? "PAYABLE" as const : "RECEIVABLE" as const;
+}
+
+export function ledgerPrincipal(ledger: PersonLedger, entries: PersonLedgerEntry[]) {
+  if (ledger.openingReceivable < 0) return Math.abs(ledger.openingReceivable) + ledgerReceived(entries, ledger.id);
+  return ledger.openingReceivable + ledgerGiven(entries, ledger.id);
 }
 
 function monthKey(date: Date) {
@@ -97,7 +106,7 @@ export function installmentSchedule(ledger: PersonLedger, entries: PersonLedgerE
   const installment = Number(ledger.installmentAmount || 0);
   if (!principal || !installment || !ledger.firstDueDate) return [] as InstallmentScheduleRow[];
   const count = Math.ceil(principal / installment);
-  let received = ledgerReceived(entries, ledger.id);
+  let received = ledger.openingReceivable < 0 ? ledgerGiven(entries, ledger.id) : ledgerReceived(entries, ledger.id);
   const start = new Date(`${ledger.firstDueDate}T12:00:00`);
   return Array.from({ length: count }, (_, index) => {
     const due = new Date(start);

@@ -19,15 +19,16 @@ Mobile-first cashbook for Roman Urdu and English transaction entry. The frontend
 - Wallet-to-wallet transfers that do not change total cashbook balance
 - Separate Savings and Khaata buttons for quick access
 - Savings goals for future assets, shopping, tours, and other plans; every saving or withdrawal uses a selected wallet and updates its balance
-- Open Khaatas for ongoing lending and receipts
-- Target receivables with optional monthly installment schedules and overdue/partial/paid states
-- Lending and installment receipts linked to the selected wallet so both cash and receivables stay correct
-- Editable savings goals, initial Khaata receivables, and every Savings/Khaata cash entry
+- Two-way Khaatas: start at zero, record a receivable, or record a payable
+- Give or receive money as the first Khaata entry; the app clearly shows whether you will receive or pay
+- Optional monthly installment schedules for starting balances
+- Khaata money given and received is linked to the selected wallet
+- Recent savings activity shown inside each goal, with edit and delete controls for every entry
 - Date-filtered A4 Khaata PDFs with activity, brought-forward balance, and installment schedule
-- Date-filtered cash in/out reports in PDF and CSV
+- Wallet- and date-filtered cash in/out reports in PDF and CSV
 - Mobile file sharing to WhatsApp, with PDF download plus prepared WhatsApp message as the desktop fallback
-- Daily closing summary per wallet with expected balance, counted balance, difference, and notes
-- Separate History, Insights, and Settings tabs
+- Opening balances managed once per wallet from Settings
+- Simplified Home, History, Plans, and Settings navigation
 - Roman Urdu rules for `liye`, `diye`, `jama karwaye`, and `nikalwaye`
 - Deterministic Roman Urdu/English compound-number parsing shared by the app and Edge Function
 - Gemini structured parsing with an offline rules-based fallback

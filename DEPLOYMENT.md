@@ -106,14 +106,15 @@ Each tester should:
 5. After returning to Hisaab, wait for **Google Sheet created and connected**. The app automatically creates **Hisaab AI Cashbook** and synchronizes local entries.
 6. Test voice, chat, and manual entries.
 7. Add an opening balance, then confirm it appears as an opening transaction.
-8. Complete **Close today's cash** and check that expected cash, counted cash, and any difference are clear.
+8. Open **Settings → Opening balances**, add or edit the starting balance for each wallet, and confirm it is not shown as a recurring Home action.
 9. Press the Google Sheets button to open the tester's sheet and confirm the transaction rows.
 10. Edit one description in Google Sheets, return to **Settings → Check Google Sheet changes**, and confirm that Hisaab asks whether to import or restore rather than overwriting automatically.
 11. Open **Savings**, create a goal, choose a wallet, and save an amount. Confirm the wallet balance decreases; withdraw it and confirm the balance increases.
 12. Edit the goal and a savings entry, then confirm the goal, wallet, and History all update without duplicate transactions.
-13. Open **Khaata**, create a target receivable with a monthly installment, receive one payment into a wallet, and confirm both the wallet and outstanding receivable update.
-14. Edit the initial receivable and a Khaata entry, then confirm the wallet and outstanding amount remain consistent.
-15. Apply a date filter and save/share the Khaata PDF. In **History & reports**, export date-filtered cash in/out PDF and CSV reports.
+13. Open **Khaata**, create one starting receivable and one starting payable. Confirm each card clearly says whether you will receive or pay.
+14. Create a Khaata at zero and use **Receive money** as its first entry. Confirm the wallet increases and the Khaata becomes payable.
+15. Edit and delete Savings/Khaata entries, then confirm linked wallet transactions update without duplicates.
+16. Apply a date filter and save/share the Khaata PDF. In **History & reports**, select one wallet and export date-filtered PDF and CSV reports.
 
 ## 8. Troubleshooting
 

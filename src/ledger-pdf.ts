@@ -2,10 +2,11 @@ import type { jsPDF } from "jspdf";
 import type { CashbookProfile } from "./profile";
 import { currencyPrefix } from "./profile";
 import type { InstallmentScheduleRow, PersonLedger, PersonLedgerEntry } from "./planning";
-import { installmentSchedule, ledgerOutstanding, ledgerPrincipal, ledgerReceived } from "./planning";
+import { installmentSchedule, ledgerGiven, ledgerOutstanding, ledgerReceived } from "./planning";
 
 const safeName = (value: string) => value.trim().replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "ledger";
 const money = (value: number, currency: CashbookProfile["currency"]) => `${currencyPrefix(currency)} ${value.toLocaleString("en-PK")}`;
+const balanceMoney = (value:number,currency:CashbookProfile["currency"]) => value===0?`${money(0,currency)} settled`:`${money(Math.abs(value),currency)} ${value<0?"payable":"receivable"}`;
 const displayDate = (value: string) => new Date(`${value}T12:00:00`).toLocaleDateString("en-PK", { day: "numeric", month: "short", year: "numeric" });
 
 function addPageHeader(doc: jsPDF, ledger: PersonLedger, page: number) {
@@ -34,18 +35,18 @@ export async function createLedgerPdf(ledger: PersonLedger, entries: PersonLedge
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   addPageHeader(doc, ledger, 1);
   const allLedgerEntries=entries.filter(entry=>entry.ledgerId===ledger.id);const from=dates?.from;const to=dates?.to;const rows=allLedgerEntries.filter(entry=>(!from||entry.date>=from)&&(!to||entry.date<=to));
-  const principal = ledgerPrincipal(ledger, allLedgerEntries);
+  const given = ledgerGiven(allLedgerEntries, ledger.id);
   const received = ledgerReceived(allLedgerEntries, ledger.id);
   const outstanding = ledgerOutstanding(ledger, allLedgerEntries);
   let y = 41;
   const cards = [
-    ["Total receivable", money(principal, profile.currency)],
-    ["Received", money(received, profile.currency)],
-    ["Outstanding", money(outstanding, profile.currency)],
+    ["Money given", money(given, profile.currency)],
+    ["Money received", money(received, profile.currency)],
+    [outstanding<0?"You will pay":"You will receive", money(Math.abs(outstanding), profile.currency)],
   ];
   cards.forEach(([label, value], index) => {
     const x = 14 + (index * 61);
-    doc.setFillColor(index === 2 ? 255 : 247, index === 2 ? 241 : 245, index === 2 ? 235 : 241);
+    doc.setFillColor(index === 2 ? (outstanding<0?255:235) : 247, index === 2 ? (outstanding<0?241:248) : 245, index === 2 ? (outstanding<0?235:241) : 241);
     doc.roundedRect(x, y, 57, 23, 3, 3, "F");
     doc.setFontSize(8);
     doc.setTextColor(110, 104, 96);
@@ -68,11 +69,11 @@ export async function createLedgerPdf(ledger: PersonLedger, entries: PersonLedge
   ["Date", "Details", "Wallet", "Given", "Received", "Balance"].forEach((label, index) => doc.text(label, [16, 39, 99, 130, 151, 176][index], y + 6));
   y += 9;
   const before=from?allLedgerEntries.filter(entry=>entry.date<from):[];let balance=before.reduce((sum,entry)=>sum+(entry.kind==="RECEIVED"?-entry.amount:entry.amount),ledger.openingReceivable);
-  if (ledger.openingReceivable > 0 || before.length) {
+  if (ledger.openingReceivable !== 0 || before.length) {
     doc.setFontSize(8);
     doc.text("Opening", 16, y + 6);
     doc.text(from?"Balance brought forward":"Opening receivable", 39, y + 6);
-    doc.text(money(balance, profile.currency), 176, y + 6);
+    doc.text(balanceMoney(balance, profile.currency), 194, y + 6, {align:"right"});
     y += 9;
   }
   rows.forEach((entry) => {
@@ -86,7 +87,7 @@ export async function createLedgerPdf(ledger: PersonLedger, entries: PersonLedge
     doc.text((entry.walletId ? walletNames[entry.walletId] : "-")?.slice(0, 16) || "-", 99, y + 6);
     if (entry.kind !== "RECEIVED") doc.text(money(entry.amount, profile.currency), 130, y + 6);
     if (entry.kind === "RECEIVED") doc.text(money(entry.amount, profile.currency), 151, y + 6);
-    doc.text(money(balance, profile.currency), 176, y + 6);
+    doc.text(balanceMoney(balance, profile.currency), 194, y + 6, {align:"right"});
     y += 10;
   });
   if (!rows.length && !balance) {

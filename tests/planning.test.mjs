@@ -33,6 +33,22 @@ test("person ledger combines opening target, new lending, and receipts", () => {
   assert.equal(ledgerOutstanding(ledger, entries), 130000);
 });
 
+test("Khaata can start as a creditor and receiving money increases the payable", () => {
+  const creditor = { ...ledger, id: "creditor-1", openingReceivable: -40000 };
+  const entries = [
+    { id: "1", ledgerId: creditor.id, kind: "RECEIVED", amount: 10000, date: "2026-08-15" },
+    { id: "2", ledgerId: creditor.id, kind: "LENT", amount: 15000, date: "2026-09-05" },
+  ];
+  assert.equal(ledgerOutstanding(creditor, entries), -35000);
+  assert.equal(ledgerPrincipal(creditor, entries), 50000);
+});
+
+test("an open Khaata can receive money as its first entry", () => {
+  const open = { ...ledger, id: "open-1", mode: "OPEN", openingReceivable: 0 };
+  const entries = [{ id: "1", ledgerId: open.id, kind: "RECEIVED", amount: 25000, date: "2026-08-15" }];
+  assert.equal(ledgerOutstanding(open, entries), -25000);
+});
+
 test("monthly installment schedule allocates receipts oldest-first", () => {
   const entries = [{ id: "1", ledgerId: ledger.id, kind: "RECEIVED", amount: 15000, date: "2026-10-01" }];
   const rows = installmentSchedule(ledger, entries, new Date("2026-10-06T12:00:00"));

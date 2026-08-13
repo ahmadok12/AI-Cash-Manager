@@ -17,6 +17,13 @@ Mobile-first cashbook for Roman Urdu and English transaction entry. The frontend
 - Multiple cash and bank wallets with independent balances
 - One editable opening balance per wallet
 - Wallet-to-wallet transfers that do not change total cashbook balance
+- Savings goals for future assets, shopping, tours, and other plans; savings are earmarked without being treated as expenses
+- Separate cash in/out ledgers for family members or other people
+- Open people ledgers for ongoing lending and receipts
+- Target receivables with optional monthly installment schedules and overdue/partial/paid states
+- Lending and installment receipts linked to the selected wallet so both cash and receivables stay correct
+- Downloadable A4 person-ledger PDFs with activity, balance, and installment schedule
+- Mobile file sharing to WhatsApp, with PDF download plus prepared WhatsApp message as the desktop fallback
 - Daily closing summary per wallet with expected balance, counted balance, difference, and notes
 - Separate History, Insights, and Settings tabs
 - Roman Urdu rules for `liye`, `diye`, `jama karwaye`, and `nikalwaye`
@@ -91,4 +98,4 @@ The browser must ask for microphone permission on the first voice entry. A home-
 - `2 hazar 5 so 60 diye` → Rs. 2,560 money out
 - `do hazaar paanch sau saath diye` → Rs. 2,560 money out
 
-Run `npm test` to verify the balance rules and compound-number parser before deployment.
+Run `npm test` to verify wallet balances, savings calculations, installment allocation, and the compound-number parser before deployment.

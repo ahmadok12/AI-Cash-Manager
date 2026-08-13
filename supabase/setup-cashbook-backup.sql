@@ -4,9 +4,14 @@ create table if not exists public.cashbook_state (
   transactions jsonb not null default '[]'::jsonb,
   closings jsonb not null default '[]'::jsonb,
   profile jsonb not null default '{}'::jsonb,
+  planning jsonb not null default '{"goals":[],"savingsEntries":[],"peopleLedgers":[],"ledgerEntries":[]}'::jsonb,
   spreadsheet_id text,
   updated_at timestamptz not null default now()
 );
+
+alter table public.cashbook_state
+  add column if not exists planning jsonb not null
+  default '{"goals":[],"savingsEntries":[],"peopleLedgers":[],"ledgerEntries":[]}'::jsonb;
 
 alter table public.cashbook_state enable row level security;
 

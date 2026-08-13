@@ -1,1 +1,1 @@
-{"root":["./src/App.tsx","./src/cloud-backup.ts","./src/google-sheets.ts","./src/ledger.ts","./src/main.tsx","./src/opening-balance.ts","./src/profile.ts","./src/sheet-conflicts.ts","./src/voice-transfer.ts","./src/wallets.ts"],"version":"5.9.2"}
+{"root":["./src/App.tsx","./src/cloud-backup.ts","./src/google-sheets.ts","./src/ledger-pdf.ts","./src/ledger.ts","./src/main.tsx","./src/opening-balance.ts","./src/planning.ts","./src/profile.ts","./src/sheet-conflicts.ts","./src/voice-transfer.ts","./src/wallets.ts"],"version":"5.9.2"}

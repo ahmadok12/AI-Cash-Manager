@@ -53,6 +53,8 @@ The publishable key is designed for browser use. Never put a Supabase secret/ser
 
    `supabase/setup-cashbook-backup.sql`
 
+Run this SQL again when upgrading from v2.4 or earlier. It safely adds the new `planning` backup field used by Savings Goals and People Ledgers without deleting existing transactions.
+
 The table has Row Level Security enabled. Every operation checks that `auth.uid()` matches the row's `user_id`.
 
 If anonymous sign-in or the table is not ready, Hisaab continues saving on the current device and shows **Setup required** under Supabase backup.
@@ -107,6 +109,9 @@ Each tester should:
 8. Complete **Close today's cash** and check that expected cash, counted cash, and any difference are clear.
 9. Press the Google Sheets button to open the tester's sheet and confirm the transaction rows.
 10. Edit one description in Google Sheets, return to **Settings → Check Google Sheet changes**, and confirm that Hisaab asks whether to import or restore rather than overwriting automatically.
+11. Open **Plans**, create a savings goal, and add a reserved amount. Confirm the wallet balance does not change.
+12. Create a target receivable for a person with a monthly installment, receive one payment into a wallet, and confirm both the wallet and outstanding receivable update.
+13. Open the person ledger, save its PDF, and test **Share on WhatsApp** on a phone.
 
 ## 8. Troubleshooting
 
